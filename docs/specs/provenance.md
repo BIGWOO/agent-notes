@@ -14,7 +14,7 @@ Source: 從 `docs/PRD.md` 拆分整理
 
 #### Source Index
 
-`.agent-notes/source-index.json` 儲存 source ref 與本機來源的對應：
+`.agent-notes/source-index.json` 是 canonical source index schema，儲存 source ref 與本機來源的對應：
 
 ```json
 {
@@ -24,6 +24,7 @@ Source: 從 `docs/PRD.md` 拆分整理
       "kind": "summary-file",
       "tool": "codex",
       "capturedAt": "2026-06-06T12:00:00+08:00",
+      "sessionIds": ["SES-20260606-001"],
       "localPath": "$HOME/tmp/agent-summary.md",
       "contentHash": "sha256:...",
       "privacy": "private",
@@ -37,6 +38,7 @@ Source: 從 `docs/PRD.md` 拆分整理
 規則：
 
 - `sourceRef` 格式建議為 `src_<YYYYMMDD>_<tool>_<sequence>`
+- `sources` 必須是 object map，key 就是 `sourceRef`；不得在其他文件改成 array schema
 - `localPath` 只能存在 `.agent-notes/source-index.json`
 - session card、decision log、active tasks、context files 只能引用 opaque `sourceRef`
 - `contentHash` 用於驗證本機 source 是否被修改；若 hash 對象是 raw transcript 或本機檔案，hash 只能存在 `.agent-notes/source-index.json`
@@ -54,7 +56,7 @@ Team Vault 可 tracked 一份 team-safe source manifest，例如 `00-Meta/System
 - sourceRef: src_20260606_codex_001
   sourceKind: pull-request
   tool: codex
-  capturedAt: 2026-06-06T12:00:00+08:00
+  capturedAt: "2026-06-06T12:00:00+08:00"
   ownerAlias: bw
   safeSourceUrl: https://example.com/org/repo/pull/123
   safeContentHash: sha256:...
@@ -95,21 +97,25 @@ Team Vault 不能依賴 ignored `.agent-notes/provenance.jsonl` 作為唯一 tra
 
 #### Provenance Log
 
-`.agent-notes/provenance.jsonl` 記錄 item 產生、更新與來源關係：
+`.agent-notes/provenance.jsonl` 是 canonical provenance log schema，記錄 item 產生、更新與來源關係。每行一筆 JSON object：
 
 ```json
-{"event":"derived","itemId":"DEC-0001","itemType":"decision","sessionId":"SES-20260606-001","sourceRefs":["src_20260606_codex_001"],"derivedFrom":"summary-file:Decisions","createdAt":"2026-06-06T12:05:00+08:00"}
+{"version":1,"event":"derived-item-created","createdAt":"2026-06-06T12:05:00+08:00","sessionId":"SES-20260606-001","itemId":"DEC-0001","itemType":"decision","sourceRefs":["src_20260606_codex_001"],"derivedFrom":"summary-file:Decisions","notePath":"03-Projects/Example/03-context/decision-log.md","contentHash":"sha256:..."}
 ```
 
 規則：
 
+- `event` Phase 1 可用值為 `session-created`、`derived-item-created`、`derived-item-updated`、`marker-block-updated`
 - 每個 generated item 必須有 `itemId`
 - decision id 使用 `DEC-0001`
 - task id 使用 `TASK-0001`
 - context update id 使用 `CTX-0001`
 - pitfall id 使用 `PIT-0001`
+- `sourceRefs` 不可空
+- `notePath` 必須是 vault-relative path
 - marker updater 更新既有 item 時必須保留 item id
 - 無法確認來源的 generated item 不得寫入 project context，只能留在 inbox 或 dry-run output
+- marker item 與對應 provenance entry 必須在同一 write batch 內完成；若 provenance entry 無法寫入，該 marker item 不得寫入
 
 #### Generated Item Format
 
@@ -135,6 +141,16 @@ Active tasks generated block：
 <!-- agent-notes:end active-tasks -->
 ```
 
+Project summary generated block：
+
+```markdown
+<!-- agent-notes:start project-summary -->
+- CTX-0001 | Local-first CLI that turns agent work into searchable Markdown notes
+  - sourceRefs: src_20260606_codex_001
+  - session: SES-20260606-001
+<!-- agent-notes:end project-summary -->
+```
+
 #### Trace Command
 
 ```bash
@@ -142,6 +158,15 @@ agent-notes trace DEC-0001
 agent-notes trace TASK-0001
 agent-notes trace src_20260606_codex_001
 ```
+
+Phase 1 查找順序：
+
+1. `sourceRef`：查 `.agent-notes/source-index.json`，再查 session cards 中引用該 sourceRef 的項目。
+2. `sessionId`：查 session card frontmatter，並收集 provenance log 中同 session 的 entries。
+3. `itemId`：查 `.agent-notes/provenance.jsonl`，再查 tracked marker blocks / session cards fallback。
+4. 若 `sourceRef` 找不到，回 `SOURCE_NOT_FOUND`。
+5. 若 `itemId` 或 `sessionId` 找不到，回 `TRACE_TARGET_NOT_FOUND`。
+6. 若 item 存在但缺 `sourceRefs`、session 或 provenance chain，回 `PROVENANCE_ORPHAN`。
 
 預期輸出：
 
@@ -151,7 +176,8 @@ agent-notes trace src_20260606_codex_001
 - session id
 - derivedFrom section
 - content hash
-- 若 source 位於本機 private index，顯示 safe local summary，不直接把絕對路徑寫入 Markdown
+- local source 是否存在的 warning
+- 若 source 位於本機 private index，terminal 可顯示 safe local summary；不得把 local pointer 寫入 tracked Markdown
 
 ## Shared Provenance
 

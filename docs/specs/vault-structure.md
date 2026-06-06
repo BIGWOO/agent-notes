@@ -40,7 +40,7 @@ private/
   raw-sessions/
 ```
 
-新 vault 的 `.gitignore` 必須至少排除 `private/` 與 `.agent-notes/`。`private/raw-sessions/` 只在使用者明確啟用 `--include-raw` 時使用，且應被 vault `.gitignore`、`doctor` 與文件明確標示為不應公開同步的私密資料。
+新 vault 的 `.gitignore` 必須至少排除 `private/` 與 `.agent-notes/`。Phase 1 不支援 raw transcript copy；`private/raw-sessions/` 保留給 post-MVP，且必須被 vault `.gitignore`、`doctor` 與文件明確標示為不應公開同步的私密資料。
 
 ## 分類策略
 
