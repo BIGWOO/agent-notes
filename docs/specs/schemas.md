@@ -311,6 +311,39 @@ agent-notes capture --repo "$PWD" --tool codex --scope project --summary-file ./
 - 若 `--visibility team-safe | public-safe` 但 sensitive scan 失敗，`capture` 必須回傳 `PRIVATE_DATA_RISK`
 - 未提供 `--scope` 且 `--repo` 找不到 project 時，v0.1 personal vault 預設寫入 inbox，並提示使用 `agent-notes project add --repo "$PWD"`；Phase 4 Team Vault 則提示使用 `agent-notes project attach --repo "$PWD" --project-id <id>`
 
+## Summary File Parser
+
+`capture --summary-file` 使用 deterministic Markdown parser，不呼叫 LLM、不做語意補完。
+
+Parsing rules：
+
+- 檔案必須是 UTF-8；不可解碼時回 `INVALID_SUMMARY_FILE`。
+- 解析前將 CRLF normalize 成 LF，但寫入 session body 時保留內容語意即可，不要求 byte-for-byte 保留。
+- 必要 heading 固定為 `## Summary`、`## Changes`、`## Decisions`、`## Validation`、`## Next Steps`、`## Handoff`。
+- 必要 heading 必須依上述順序出現，且不得重複；缺少、順序錯誤或大小寫不符時回 `INVALID_SUMMARY_FILE`。
+- Parser 必須忽略 fenced code block 內的 `##`，避免程式碼範例被誤判為 heading。
+- `Summary` section trim 後不得空白；其他 section 可空白。
+- section content 可保留 Markdown，但 frontmatter 與 derived item title 只能使用純文字摘要，不得包含 fenced code。
+
+Derived item extraction：
+
+| Source Section | Destination | Item Type | Rule |
+| --- | --- | --- | --- |
+| `Summary` | session body；project scope 時必須更新 `project-summary` | `context-update` / `CTX` | project marker 只取第一個非空段落作 title |
+| `Decisions` | session body；project scope 時更新 decision log | `decision` / `DEC` | 每個 top-level bullet、numbered item 或非空段落是一個 decision candidate |
+| `Next Steps` | session body；project scope 時更新 active tasks | `task` / `TASK` | 每個 top-level bullet、numbered item 或非空段落是一個 task candidate |
+| `Changes` | session body only | none | Phase 1 不產生 marker item |
+| `Validation` | session body only | none | Phase 1 不產生 marker item |
+| `Handoff` | session body only | none | Phase 1 不產生 marker item |
+
+Item extraction rules：
+
+- 只處理 top-level bullets、numbered items 與非空段落；nested bullets 併入上一個 item 的 details。
+- title 取第一行，去掉 Markdown list marker、checkbox marker 與多餘空白。
+- title 空白、只含 punctuation 或超過 200 characters 時略過該 candidate，並在 dry-run / output 加 warning。
+- Empty `Decisions` 或 `Next Steps` 不更新對應 marker block，不視為錯誤。
+- 所有 derived items 必須帶 `sessionId`、`sourceRefs` 與 `derivedFrom`，否則不得寫入 project marker。
+
 ## Source Index Schema
 
 Canonical schema 定義在 [`provenance.md`](provenance.md#source-index)。本檔只要求 schema validator 匯出 `sourceIndexSchema`，並使用同一份 fixture，避免 source index 形狀在多份文件分歧。

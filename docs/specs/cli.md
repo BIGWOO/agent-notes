@@ -14,6 +14,7 @@ Phase 1 所有 command 需遵守同一組基本行為：
 
 - 預設輸出人類可讀文字，測試以 exit code 與檔案結果為準。
 - `--dry-run` 不寫任何檔案，只列出將讀取、建立、修改或略過的 path。
+- `--dry-run` 輸出中的 tracked vault path 必須是 vault-relative；本機絕對 repo path、home path、agent config path 預設需 redacted，只能顯示 basename、short hash 或用途說明。
 - 會寫檔的 command 必須先載入 config、驗證 vault、取得必要 lock，並在寫入前做 backup 或 atomic write。
 - 任何 command 都不得把本機絕對 repo path、vault path、project map path 寫入 tracked Markdown。
 - 找不到 config 時，除 `init`、`integrate --list`、`--help`、`--version` 外一律回傳 `CONFIG_NOT_FOUND`。
@@ -64,6 +65,32 @@ Phase 1 `init` 的完成條件：
 - `notePath` 預設為 `03-Projects/<Project Name>`，必須是 vault 相對路徑。
 - 若 project 已存在且 repo path 已綁定，command idempotent，回傳 `OK` 並顯示 existing entry。
 - 不把絕對 repo path 寫入 Markdown，只寫 local project map。
+- `--dry-run` 顯示 project map entry、project context template paths 與會建立的目錄，不寫檔。
+- `--dry-run` 不得輸出 repo 絕對路徑；repo path 只能顯示 basename、`repoId` 與可重現的 short hash。
+
+### `agent-notes project list`
+
+`project list` 是 read-only command，用來讓使用者與 agent 確認目前 vault 已知的 projects。
+
+規則：
+
+- 載入 config 與 project map；project map schema 無效時回 `PROJECT_MAP_INVALID`。
+- 預設輸出 `projectId`、`name`、`repoId`、`notePath`、`visibility`。
+- 不輸出 `repoPaths` 的絕對路徑；若需要除錯，應由 `doctor --check project-map` 顯示本機風險摘要。
+- `project list --repo <path>` 會先 canonicalize repo path，並在輸出中標示 matched project；找不到時仍回 `OK`，但顯示 `matched: none` 與 `project add` 提示。
+- project map 為空時回 `OK`，顯示 empty state 與 `agent-notes project add --repo "$PWD"` 範例。
+
+### `agent-notes project check`
+
+`project check` 是 read-only command，用來驗證某個 repo 是否能解析到 project。
+
+規則：
+
+- 未提供 `--repo` 時使用目前工作目錄。
+- `<path>` 必須 canonicalize；路徑不存在或不可讀回 `PATH_INVALID`。
+- repo path 對應到 project map 時回 `OK`，輸出 `projectId`、`repoId`、`notePath`。
+- 找不到 project 時回 `PROJECT_NOT_FOUND`，不得自動建立 project map entry。
+- 若 project entry 的 `notePath` 不是 vault-relative path，回 `PROJECT_MAP_INVALID`。
 
 ### `agent-notes capture`
 
