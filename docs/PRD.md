@@ -276,6 +276,13 @@ source:
   kind: summary-file
   ref: local-summary-2026-06-06
   rawIncluded: false
+sourceRefs:
+  - src_20260606_codex_001
+derivedItems:
+  decisions:
+    - DEC-0001
+  tasks:
+    - TASK-0001
 tags:
   - session
   - codex
@@ -291,6 +298,8 @@ tags:
 - `scope: project` 時，`projectId` 與 `repoId` 必填，且必須可回查到 local project map
 - `scope: inbox | daily | area | personal` 時，`projectId`、`repoId` 與 `project` display field 可省略
 - 非 project scope 的目的地由 `scope` 決定，例如 `inbox` 寫入 `01-Inbox/`，`daily` 寫入 `02-Daily/`
+- `sourceRefs` 必須使用 opaque source id，不得使用本機絕對路徑
+- `derivedItems` 記錄本 session 產出的 decision、task、context update 等 item id
 
 ### 8.3 Session Card Body
 
@@ -374,6 +383,100 @@ agent-notes capture --repo "$PWD" --tool codex --scope project --summary-file ./
 - raw transcript 不得在 MVP 預設寫入 vault
 - 未提供 `--scope` 且 `--repo` 找不到 project 時，預設寫入 inbox，並提示使用 `agent-notes project add --repo "$PWD"`
 
+### 8.6 Provenance Model
+
+所有由 Agent Notes 產生或更新的決策、任務、context 摘要與 pitfalls，都必須能回溯來源。公開可讀 Markdown 只放 opaque ids；真實 source path、hash 與 local metadata 只放在被 vault `.gitignore` 排除的 `.agent-notes/`。
+
+#### Source Index
+
+`.agent-notes/source-index.json` 儲存 source ref 與本機來源的對應：
+
+```json
+{
+  "version": 1,
+  "sources": {
+    "src_20260606_codex_001": {
+      "kind": "summary-file",
+      "tool": "codex",
+      "capturedAt": "2026-06-06T12:00:00+08:00",
+      "localPath": "$HOME/tmp/agent-summary.md",
+      "contentHash": "sha256:...",
+      "privacy": "private",
+      "rawIncluded": false,
+      "redacted": false
+    }
+  }
+}
+```
+
+規則：
+
+- `sourceRef` 格式建議為 `src_<YYYYMMDD>_<tool>_<sequence>`
+- `localPath` 只能存在 `.agent-notes/source-index.json`
+- session card、decision log、active tasks、context files 只能引用 opaque `sourceRef`
+- `contentHash` 用於驗證 source 是否被修改
+- 找不到 source ref 時，`trace` 回傳 `SOURCE_NOT_FOUND`
+
+#### Provenance Log
+
+`.agent-notes/provenance.jsonl` 記錄 item 產生、更新與來源關係：
+
+```json
+{"event":"derived","itemId":"DEC-0001","itemType":"decision","sessionId":"SES-20260606-001","sourceRefs":["src_20260606_codex_001"],"derivedFrom":"summary-file:Decisions","createdAt":"2026-06-06T12:05:00+08:00"}
+```
+
+規則：
+
+- 每個 generated item 必須有 `itemId`
+- decision id 使用 `DEC-0001`
+- task id 使用 `TASK-0001`
+- context update id 使用 `CTX-0001`
+- pitfall id 使用 `PIT-0001`
+- marker updater 更新既有 item 時必須保留 item id
+- 無法確認來源的 generated item 不得寫入 project context，只能留在 inbox 或 dry-run output
+
+#### Generated Item Format
+
+Decision log generated block：
+
+```markdown
+<!-- agent-notes:start decision-log -->
+- DEC-0001 | 採用 Node.js + TypeScript 作為 MVP CLI runtime
+  - status: accepted
+  - sourceRefs: src_20260606_codex_001
+  - session: SES-20260606-001
+<!-- agent-notes:end decision-log -->
+```
+
+Active tasks generated block：
+
+```markdown
+<!-- agent-notes:start active-tasks -->
+- TASK-0001 | 實作 marker block updater
+  - status: planned
+  - sourceRefs: src_20260606_codex_001
+  - relatedDecisions: DEC-0001
+<!-- agent-notes:end active-tasks -->
+```
+
+#### Trace Command
+
+```bash
+agent-notes trace DEC-0001
+agent-notes trace TASK-0001
+agent-notes trace src_20260606_codex_001
+```
+
+預期輸出：
+
+- item id 與 type
+- item 所在 note path
+- sourceRefs
+- session id
+- derivedFrom section
+- content hash
+- 若 source 位於本機 private index，顯示 safe local summary，不直接把絕對路徑寫入 Markdown
+
 ## 9. Marker Block 策略
 
 Agent Notes 只能更新明確標記的 generated regions：
@@ -391,6 +494,9 @@ Generated content.
 - marker block 格式異常時安全失敗
 - v0.1 只允許從 summary-file 的明確 sections 更新 generated blocks，例如從 `Next Steps` 更新 active tasks，從 `Decisions` 更新 decision log
 - 不從自由文字推論新任務、決策或風險
+- 每個 generated item 必須有穩定 item id 與 `sourceRefs`
+- 更新既有 generated item 時必須保留 item id，不可因重新生成而換 id
+- 無 sourceRefs 的 generated item 不得寫入 marker block
 - dry-run 只輸出 unified diff，不寫檔
 - 所有實際 marker write 都必須先建立 backup
 - backup 放在被 vault `.gitignore` 排除的 `.agent-notes/backups/`
@@ -433,17 +539,127 @@ v0.1 分類規則必須 deterministic：
 
 ## 11. Runtime 架構
 
+Runtime 必須是 filesystem-first，所有 command 共用同一組核心元件，不讓不同 agent 或不同 command 自己產生 Markdown 格式。
+
+### 11.1 核心元件
+
+| 元件 | 責任 |
+| --- | --- |
+| Config Loader | 讀取 `~/.config/agent-notes/config.json`，套用 locale、vault path、privacy defaults |
+| Vault Manager | 建立與驗證標準 Agent Notes vault、vault `.gitignore`、必要目錄與模板 |
+| Project Resolver | 讀取 local/private project map，依 repo path 解析 `projectId`、`repoId`、`notePath` |
+| Router | 依 `--scope`、repo resolution 與 deterministic rules 決定目的地 |
+| Capture Parser | 驗證 `--summary-file` headings 與必要內容，處理 `--source-file` pointer |
+| Frontmatter Writer | 產生 session card frontmatter，不寫入絕對路徑或 private project map path |
+| Source Index | 維護 `.agent-notes/source-index.json`，將 opaque source ref 對應到本機 source path |
+| Provenance Store | 維護 `.agent-notes/provenance.jsonl`，記錄 source、session、derived item 的關係 |
+| Marker Updater | 只更新 marker block 內 generated content，支援 dry-run、backup、lock、atomic write |
+| Context Builder | 讀取 project context、recent sessions、decisions、pitfalls，輸出 bounded context packet |
+| Trace Resolver | 依 item id 或 source ref 追溯 session、source、note path 與 derivedFrom |
+| Doctor | 驗證 config、vault、project map、Git 狀態、private path 與 integration 狀態 |
+| Integration Engine | 偵測、dry-run、backup、apply agent hook 設定 |
+
+### 11.2 Command Runtime
+
 ```mermaid
 flowchart TD
-    A["Agent 完成工作"] --> B["agent-notes capture"]
-    B --> C["收集 metadata"]
-    C --> D["分類 scope"]
-    D --> E["解析 project map"]
-    E --> F["寫入 session card"]
-    F --> G["更新 marker blocks"]
-    G --> H["執行驗證"]
-    H --> I["提供下次 agent 可用 context"]
+    A["CLI entry"] --> B["Load local config"]
+    B --> C["Validate or create vault context"]
+    C --> D{"Command"}
+
+    D --> E["init"]
+    D --> F["project"]
+    D --> G["capture"]
+    D --> H["context"]
+    D --> I["doctor"]
+    D --> J["integrate"]
+    D --> K["trace"]
+
+    E --> E1["Create standard vault"]
+    E1 --> E2["Create config and project map"]
+    E2 --> E3["Optional integration wizard"]
+    E3 --> J2["Use integration engine"]
+
+    F --> F1["Add/list/check project map entries"]
+    G --> G1["Run capture pipeline"]
+    H --> H1["Build bounded context packet"]
+    I --> I1["Run validators"]
+    J --> J1["Detect agent config"]
+    J1 --> J2["Dry-run preview"]
+    J2 --> J3["Explicit apply with backup"]
+    K --> K1["Resolve provenance graph"]
 ```
+
+規則：
+
+- `init` 是唯一可建立新 vault 的 command
+- `project` 只修改 local/private project map 與對應 vault 目錄
+- `capture` 負責建立 session card 與 deterministic marker updates
+- `context` 不寫入 vault，只輸出 bounded context packet
+- `doctor` 預設 read-only；未來 `doctor --fix` 需另行明確授權
+- `integrate` engine 可由 `init` wizard 呼叫，也可由使用者獨立執行
+- `trace` 預設 read-only，只讀取 session cards、source index 與 provenance log
+
+### 11.3 Capture Pipeline
+
+```mermaid
+flowchart TD
+    A["capture command"] --> B["Load config and project map"]
+    B --> C["Resolve repo if provided"]
+    C --> D["Determine scope"]
+    D --> E{"scope"}
+
+    E -->|ignore| F["Output routing result only"]
+    E -->|inbox/daily/area/personal| G["Resolve non-project destination"]
+    E -->|project| H["Require projectId and repoId"]
+
+    G --> I["Validate summary-file"]
+    H --> I
+    I --> J["Create session card"]
+    J --> K["Store opaque source ref"]
+    K --> K1["Write provenance entries"]
+    K1 --> L{"include raw?"}
+    L -->|yes| M["Copy to ignored private/raw-sessions"]
+    L -->|no| N["Skip raw copy"]
+    M --> O["Optional deterministic marker updates"]
+    N --> O
+    O --> P["Lock, backup, atomic write"]
+    P --> Q["Return paths and exit code"]
+```
+
+規則：
+
+- `--scope ignore` 不讀寫 session card
+- `--scope project` 必須成功解析 project map
+- 未提供 `--scope` 時，repo resolution 成功才走 project，失敗則走 inbox
+- `summary-file` 驗證必須早於任何寫入
+- source path 只寫入 `.agent-notes/source-index.json`，session card 只存 opaque ref
+- `--include-raw` 才能複製 raw，且目的地固定在被忽略的 `private/raw-sessions/`
+- marker updates 只能使用 summary-file 的明確 sections，不做 LLM 推論
+- decisions、tasks、context updates 寫入 marker 前必須先產生 provenance entry
+- 寫入 session card、source index、raw copy、marker block 前都必須遵守 lock / backup / atomic write 規則
+
+### 11.4 Context Pipeline
+
+```mermaid
+flowchart TD
+    A["context command"] --> B["Load config and project map"]
+    B --> C["Resolve repo"]
+    C --> D["Read project context files"]
+    D --> E["Read recent session cards"]
+    E --> F["Collect decisions, tasks, pitfalls"]
+    F --> F1["Attach sourceRefs for generated items"]
+    F1 --> G["Apply size and privacy bounds"]
+    G --> H["Output context packet"]
+```
+
+規則：
+
+- `context` 不應呼叫 LLM
+- `context` 不應讀取 `private/raw-sessions/`
+- 輸出必須有 size bound，避免塞滿下一個 agent 的 context
+- context packet 中的 generated decisions/tasks 應保留 item id 與 sourceRefs
+- 找不到 project 時回傳 `PROJECT_NOT_FOUND`，並提示 `agent-notes project add --repo "$PWD"`
 
 ## 12. 整合
 
@@ -540,6 +756,7 @@ agent-notes-private/         private repo
 | `context` | v0.1 | 為 repo 輸出 context packet |
 | `doctor` | v0.1 | 驗證設定 |
 | `integrate` | v0.1 | 偵測、預覽與明確套用 agent hook integration |
+| `trace` | v0.1 | 追溯 item id、session id 或 source ref 的來源 |
 | `rollup` | Phase 3 | 產生每日或每週摘要 |
 | `classify` | post-MVP | 預覽 routing decision |
 | `sync` | post-MVP | 可選 Git-aware note sync helper |
@@ -578,6 +795,8 @@ Version 0.1 應包含：
 - `integrate --list`
 - `integrate <agent> --dry-run`
 - `integrate <agent> --apply`
+- `trace <itemId|sessionId|sourceRef>`
+- source index 與 provenance log
 - 至少一個 supported agent integration，優先支援 Codex
 - direct Markdown writes
 - project map support
@@ -587,7 +806,286 @@ Version 0.1 應包含：
 - 安裝後下一步提示
 - routing 與 marker replacement 的基礎測試
 
-## 16. Roadmap
+## 16. MVP Templates
+
+MVP 必須內建 public-safe templates。`init` 建立新 vault 時，應產生標準模板檔；`capture` 與 `project add` 應使用同一組模板，不允許各 agent 自行拼 Markdown。
+
+### 16.1 Vault `.gitignore`
+
+```gitignore
+private/
+.agent-notes/
+.DS_Store
+```
+
+### 16.2 Summary File Template
+
+Agent 或使用者提供給 `capture --summary-file` 的檔案必須符合此格式：
+
+```markdown
+## Summary
+
+## Changes
+
+## Decisions
+
+## Validation
+
+## Next Steps
+
+## Handoff
+```
+
+規則：
+
+- headings 必須完整、順序固定、大小寫固定
+- `Summary` 必須有內容
+- 其他 sections 可空白
+- 不允許在 template 內放 secret、token、channel id、真實客戶敏感資訊或私有 repo mapping
+
+### 16.3 Session Card Template
+
+```markdown
+---
+type: agent-session
+schemaVersion: 1
+title: "{{title}}"
+date: "{{date}}"
+agent: "{{agent}}"
+tool: "{{tool}}"
+scope: "{{scope}}"
+status: "{{status}}"
+visibility: private
+source:
+  kind: "{{sourceKind}}"
+  ref: "{{sourceRef}}"
+  rawIncluded: false
+sourceRefs:
+  - "{{sourceRef}}"
+derivedItems:
+  decisions: []
+  tasks: []
+  contextUpdates: []
+tags:
+  - session
+---
+
+# {{title}}
+
+## Summary
+
+{{summary}}
+
+## Changes
+
+{{changes}}
+
+## Decisions
+
+{{decisions}}
+
+## Validation
+
+{{validation}}
+
+## Next Steps
+
+{{nextSteps}}
+
+## Handoff
+
+{{handoff}}
+
+## Source
+
+{{sourceSummary}}
+```
+
+`scope: project` 的 session card 需額外加入：
+
+```yaml
+projectId: "{{projectId}}"
+project: "{{projectName}}"
+repoId: "{{repoId}}"
+```
+
+### 16.4 Project Context Templates
+
+`project add` 建立 project 目錄時，至少建立以下 context files：
+
+```markdown
+# {{projectName}}
+
+Manual notes live outside generated blocks.
+
+<!-- agent-notes:start project-summary -->
+<!-- agent-notes:end project-summary -->
+```
+
+```markdown
+# Active Tasks
+
+Manual notes live outside generated blocks.
+
+<!-- agent-notes:start active-tasks -->
+- TASK-0001 | Example task title
+  - status: planned
+  - sourceRefs: src_example_001
+<!-- agent-notes:end active-tasks -->
+```
+
+```markdown
+# Decision Log
+
+Manual notes live outside generated blocks.
+
+<!-- agent-notes:start decision-log -->
+- DEC-0001 | Example decision title
+  - status: accepted
+  - sourceRefs: src_example_001
+<!-- agent-notes:end decision-log -->
+```
+
+```markdown
+# Pitfalls
+
+Manual notes live outside generated blocks.
+
+<!-- agent-notes:start pitfalls -->
+<!-- agent-notes:end pitfalls -->
+```
+
+規則：
+
+- marker block 外的文字視為人工內容，不得自動覆蓋
+- generated block 初始可為空；範例 item 只作為格式說明，實際 template 可不預填
+- generated item 必須包含 item id 與 `sourceRefs`
+- 檔名固定為 `README.md`、`active-tasks.md`、`decision-log.md`、`pitfalls.md`
+
+## 17. Error Codes
+
+MVP command 應使用穩定、可機器判讀的錯誤碼。CLI 可同時輸出人類可讀訊息，但測試應以 code 為準。
+
+| Code | Exit | Command | 意義 | 建議動作 |
+| --- | --- | --- | --- | --- |
+| `OK` | 0 | all | 成功 | 無 |
+| `CONFIG_NOT_FOUND` | 10 | all except `init` | 找不到 local config | 執行 `agent-notes init` |
+| `CONFIG_INVALID` | 11 | all | local config schema 無效 | 修正 config 或重新 init |
+| `VAULT_NOT_FOUND` | 12 | all except `init` | vault path 不存在 | 檢查 config 或重新 init |
+| `VAULT_NOT_WRITABLE` | 13 | init/capture/project | vault 不可寫 | 修正權限或改路徑 |
+| `PROJECT_NOT_FOUND` | 20 | project/context/capture | repo 無法解析到 project | 執行 `agent-notes project add --repo "$PWD"` |
+| `PROJECT_MAP_INVALID` | 21 | project/context/capture/doctor | project map schema 無效 | 修正 project map |
+| `INVALID_SCOPE` | 30 | capture | `--scope` 不在允許值 | 使用合法 scope |
+| `INVALID_SUMMARY_FILE` | 31 | capture | summary file 缺 heading 或 Summary 空白 | 依 template 修正 summary file |
+| `SOURCE_FILE_NOT_FOUND` | 32 | capture | `--source-file` 不存在 | 修正 source path 或移除參數 |
+| `RAW_REQUIRES_SOURCE_FILE` | 33 | capture | `--include-raw` 未搭配 `--source-file` | 補 `--source-file` 或移除 `--include-raw` |
+| `SOURCE_NOT_FOUND` | 34 | trace/doctor | 找不到 source ref | 檢查 source index 或重新 capture |
+| `TRACE_TARGET_NOT_FOUND` | 35 | trace | 找不到 item id、session id 或 source ref | 確認 id 是否正確 |
+| `PROVENANCE_ORPHAN` | 36 | doctor/trace | item 有 sourceRefs 但找不到 source index 或 provenance record | 執行 doctor 並修復 index |
+| `MARKER_MISSING` | 40 | capture | 找不到必要 marker block | 重新建立 context template 或手動補 marker |
+| `MARKER_INVALID` | 41 | capture | marker block 巢狀、缺 end 或 id 不一致 | 修正 marker block |
+| `WRITE_CONFLICT` | 42 | capture/project | 寫入前檔案已被其他程序改動 | 重新執行 command |
+| `BACKUP_FAILED` | 43 | capture/project/integrate | backup 建立失敗 | 檢查 `.agent-notes/backups/` 權限 |
+| `PRIVATE_DATA_RISK` | 50 | doctor/capture | 偵測到可能外洩的絕對路徑或敏感 pattern | 改用 private config 或重新 redact |
+| `INTEGRATION_UNSUPPORTED` | 60 | integrate/init | agent 尚未支援 apply | 查看 `integrate --list` |
+| `INTEGRATION_NOT_FOUND` | 61 | integrate/init | 找不到目標 agent config | 安裝 agent 或指定 config path |
+| `INTEGRATION_APPLY_FAILED` | 62 | integrate/init | hook 設定寫入失敗 | 檢查 backup 與權限 |
+| `UNKNOWN_ERROR` | 99 | all | 未分類錯誤 | 保留 log 並回報 |
+
+## 18. Phase 1 Implementation Plan
+
+第一階段開發應採可驗證的小切片，不一次實作所有 agent integration。
+
+### 18.1 Scaffold
+
+- 建立 Node.js + TypeScript 專案
+- 設定 CLI entry、build、test、lint
+- 建立 `src/commands/`、`src/core/`、`src/schemas/`、`src/templates/`
+- 建立 fixture-based tests
+
+### 18.2 Schemas and Config
+
+- 定義 local config schema
+- 定義 project map schema
+- 定義 session frontmatter schema
+- 定義 source index 與 provenance log schema
+- 定義 error code enum
+- 實作 config loader 與 path expansion
+
+### 18.3 Vault Init
+
+- 實作 `agent-notes init`
+- 建立 `~/Documents/Agent-Notes/` 或使用者指定的新 path
+- 建立 vault `.gitignore`
+- 建立標準目錄與 templates
+- 建立 local config 與 empty project map
+- 實作 locale prompt 與 `--lang`
+
+### 18.4 Project Map
+
+- 實作 `agent-notes project add --repo`
+- 產生 `projectId`、`repoId`、`notePath`
+- 建立 project context templates
+- 實作 `project list` 與 `project check`
+
+### 18.5 Capture
+
+- 實作 summary-file parser
+- 實作 deterministic routing
+- 實作 session card writer
+- 實作 source index
+- 實作 provenance log append
+- 實作 optional raw copy
+- 實作 inbox / daily / area / personal / project destinations
+
+### 18.6 Marker Updater
+
+- 實作 marker parser
+- 實作 dry-run unified diff
+- 實作 backup、single-writer lock、atomic write
+- 保留既有 item id 並驗證 generated item 都有 `sourceRefs`
+- 實作 marker error codes
+- 加入 marker replacement tests
+
+### 18.7 Context
+
+- 實作 `agent-notes context --repo`
+- 讀取 project README、active tasks、decision log、pitfalls、recent sessions
+- context packet 保留 item id 與 sourceRefs
+- 實作 size bound
+- 確認不讀 `private/raw-sessions/`
+
+### 18.8 Doctor
+
+- 驗證 config、vault、project map、必要目錄、writable 狀態
+- 檢查 private path 是否被 Git tracked
+- 檢查 source index 與 raw storage
+- 檢查 orphan sourceRefs、missing provenance records 與無來源 generated items
+- 檢查 supported integrations
+
+### 18.9 Trace
+
+- 實作 `agent-notes trace <itemId|sessionId|sourceRef>`
+- 讀取 source index、provenance log 與 session cards
+- 輸出來源摘要、session id、note path、derivedFrom 與 content hash
+- 不把本機絕對路徑寫入 Markdown
+
+### 18.10 Integrate Codex
+
+- 實作 `integrate --list`
+- 優先支援 Codex dry-run
+- 實作 Codex apply 前 backup 與最後確認
+- Claude Code 與 OpenClaw 先顯示 coming soon
+
+### 18.11 Validation Gate
+
+- 單元測試：schema、summary parser、routing、marker updater
+- 整合測試：init -> project add -> capture -> context -> doctor
+- trace 測試：decision/task/sourceRef 可回溯到 source index 與 session card
+- dry-run 測試：capture 與 integrate 不寫檔
+- public-safe 測試：session card 不含絕對路徑
+
+## 19. Roadmap
 
 ### Phase 1：Local CLI
 
@@ -629,16 +1127,17 @@ Version 0.1 應包含：
 - 不移動、不刪除、不修改舊 vault
 - 預設 dry-run，apply 前必須逐步確認
 
-## 17. 成功指標
+## 20. 成功指標
 
 - 新 agent 能在 30 秒內找到相關 project context。
 - Session notes 都以有效 frontmatter 穩定寫入。
 - Project active tasks 與 decisions 不需人工複製也能保持更新。
+- 所有 generated decisions、tasks、context updates 都能透過 `trace` 找到 sourceRefs 與 session。
 - 非專案閒聊不污染 project notes。
 - 私密資料不被 tracked 到公開 repo。
 - 團隊成員能在 10 分鐘內安裝並跑起 MVP。
 
-## 18. 風險
+## 21. 風險
 
 | 風險 | 緩解方式 |
 | --- | --- |
@@ -646,18 +1145,19 @@ Version 0.1 應包含：
 | 私密資料外洩 | 預設 private、真實路徑只放 local config、doctor warnings、public-safe examples |
 | raw transcript 外洩 | MVP 不預設複製 raw，`--include-raw` 必須 opt-in 並標 private |
 | agent 產生的 Markdown 格式漂移 | 由單一 CLI 負責格式 |
+| 決策或任務失去來源 | sourceRefs、provenance log、trace command、doctor orphan checks |
 | Obsidian dependency 不穩 | filesystem-first design |
 | 人工筆記被覆蓋 | marker blocks 與 dry-run mode |
 | 並發寫入造成筆記損壞 | single-writer lock、atomic write、content hash 檢查 |
 | 自動 hook 修改造成使用者不信任 | 不在 install 或 init 預設流程自動修改 hook，採 dry-run 與最後確認 |
 
-## 19. Open Questions
+## 22. Open Questions
 
 - Phase 3 rollup 要用 deterministic extraction、local LLM，還是 hosted LLM？
 - 第一批正式支援的 agent hook 順序應是 Codex、Claude Code 還是 OpenClaw？
 - Import Assistant 的互動 UX 要採逐檔確認、批次確認，還是只輸出可套用計畫？
 - private companion repo 是否需要官方 scaffold，或只先提供文件建議？
 
-## 20. 初始建議
+## 23. 初始建議
 
 第一版先做小型 filesystem-first CLI，包含標準 vault 初始化、project map、capture、context、marker block updater 與明確授權的 agent hook integration。Optional Obsidian CLI、rollup 與 Import Assistant 放到後續階段。公開 repo 保持不含私密 mapping 與內部策略；真正內部 PRD 或公司特定設定應放在 private companion repo 或本機設定中。
