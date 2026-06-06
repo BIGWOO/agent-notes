@@ -32,6 +32,10 @@ Source: Phase 1 planning validation
 | ID | Scenario | Command / Steps | Exit Code | Files Written | Must Not Write | Assertions | Source Spec |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | S-CAP-001 | 新增第一個專案 | `agent-notes project add --repo "$PWD"` | `OK` | project map、project context templates | tracked absolute repo path | project id/repo id/note path deterministic | [`cli.md`](../specs/cli.md) |
+| S-CAP-001A | 列出 projects | `agent-notes project list` | `OK` | none | tracked Markdown、repo absolute path in output | 顯示 projectId、name、repoId、notePath、visibility | [`cli.md`](../specs/cli.md) |
+| S-CAP-001B | 檢查已知 repo | `agent-notes project check --repo "$PWD"` | `OK` | none | project map mutation | 回傳 projectId、repoId、notePath | [`cli.md`](../specs/cli.md) |
+| S-CAP-001C | 檢查未知 repo | `agent-notes project check --repo <unknown>` | `PROJECT_NOT_FOUND` | none | project map auto-add | 不自動建立 project；提示 `project add` | [`cli.md`](../specs/cli.md) |
+| S-CAP-001D | project add dry-run redaction | `agent-notes project add --repo "$PWD" --dry-run` | `OK` | none | repo absolute path in output | 顯示 basename、repoId、short hash；不輸出 `$PWD` | [`cli.md`](../specs/cli.md) |
 | S-CAP-002 | agent 完成工作後 capture | `agent-notes capture --repo "$PWD" --tool codex --scope project --summary-file agent-summary.md` | `OK` | session card、source index、provenance log、marker blocks | raw transcript、absolute path in Markdown | session/sourceRefs/derived items 可 trace | [`cli.md`](../specs/cli.md) |
 | S-CAP-003 | summary file 缺 `Summary` | capture with invalid file | `INVALID_SUMMARY_FILE` | none | session card | 不寫任何輸出檔 | [`schemas.md`](../specs/schemas.md) |
 | S-CAP-004 | repo 未加入 project map | `agent-notes capture --repo "$PWD" --summary-file agent-summary.md` without scope | `OK` | inbox session card、source index、provenance log | project marker blocks | 提示 `project add` | [`cli.md`](../specs/cli.md) |
@@ -40,6 +44,8 @@ Source: Phase 1 planning validation
 | S-CAP-007 | context 開工前讀取 | `agent-notes context --repo "$PWD"` | `OK` | none | raw/private dirs | 輸出 bounded context packet | [`cli.md`](../specs/cli.md) |
 | S-CAP-008 | team-safe 含本機路徑 | summary body contains `/Users/example` with `--visibility team-safe` | `PRIVATE_DATA_RISK` | none | session card、marker blocks | public-safe gate 阻擋寫入 | [`schemas.md`](../specs/schemas.md#public-safe-gating) |
 | S-CAP-009 | raw transcript opt-in | `agent-notes capture ... --include-raw` | `FEATURE_UNSUPPORTED` | none | raw copy | Phase 1 不支援 raw copy | [`cli.md`](../specs/cli.md) |
+| S-CAP-010 | summary file fenced code 內含 heading | code fence contains `## Summary` | `OK` | session card | parser section split by code block heading | fenced code 內 heading 不影響必要 headings 判定 | [`schemas.md`](../specs/schemas.md#summary-file-parser) |
+| S-CAP-011 | Decisions 與 Next Steps 產生 derived items | summary has bullets in both sections | `OK` | session card、provenance log、marker blocks | generated item without sourceRefs | Decisions -> DEC；Next Steps -> TASK；Summary -> CTX | [`schemas.md`](../specs/schemas.md#summary-file-parser) |
 
 ## Context
 
@@ -89,6 +95,15 @@ Source: Phase 1 planning validation
 | S-INT-004 | init 多選 integrations | 選 Codex + Claude Code，Codex dry-run confirmed | `OK` | Codex config only after confirmation | Claude config if unsupported | Codex 可 apply；Claude coming soon 不阻塞，輸出每個 agent 的結果摘要 | [`integrations.md`](../specs/integrations.md) |
 | S-INT-005 | npx ephemeral path | `integrate codex --apply` with ephemeral binary | `INTEGRATION_BINARY_UNSTABLE` | none | hook config | 要求 global install 或 stable binary | [`cli.md`](../specs/cli.md) |
 | S-INT-006 | apply 失敗 | Codex config backup 成功但 patch 寫入失敗 | `INTEGRATION_APPLY_FAILED` | backup file only | broken config | 保留 recovery instructions | [`integrations.md`](../specs/integrations.md) |
+
+## Write Safety
+
+| ID | Scenario | Command / Steps | Exit Code | Files Written | Must Not Write | Assertions | Source Spec |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| S-WRITE-001 | dry-run 不建立任何寫入副產物 | any write command with `--dry-run` | `OK` | none | lock、backup、temp file、target files | output contains write plan only | [`write-safety.md`](../specs/write-safety.md) |
+| S-WRITE-002 | lock 已存在 | create matching lock then run capture | `WRITE_CONFLICT` | none | target files、backup | 不覆蓋 lock；提示 manual check | [`write-safety.md`](../specs/write-safety.md) |
+| S-WRITE-003 | backup 建立失敗 | make backup dir unwritable then capture | `BACKUP_FAILED` | none | target files | target files unchanged | [`write-safety.md`](../specs/write-safety.md) |
+| S-WRITE-004 | 寫入前目標 hash 改變 | mutate target after planning | `WRITE_CONFLICT` | none after rollback | partial writes | 檔案回到 command 前狀態 | [`write-safety.md`](../specs/write-safety.md) |
 
 ## Team / Post-MVP Boundaries
 

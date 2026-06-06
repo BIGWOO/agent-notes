@@ -42,6 +42,7 @@ Version 0.1 聚焦 Local CLI：
 - Local config、project map、session frontmatter、source index schema
 - Obsidian-compatible vault 結構與 templates
 - deterministic marker block updater
+- lock / backup / atomic write / rollback 共用寫入安全機制
 - public-safe 與 provenance 檢查
 
 完整 Phase 1 任務見 [`implementation/phase-1-plan.md`](implementation/phase-1-plan.md)，實作進度見 [`implementation/progress.md`](implementation/progress.md)。
@@ -62,6 +63,7 @@ Version 0.1 聚焦 Local CLI：
 - [`specs/schemas.md`](specs/schemas.md)：local config、session card、project map、capture contract
 - [`specs/provenance.md`](specs/provenance.md)：sourceRef、trace、shared provenance
 - [`specs/marker-blocks.md`](specs/marker-blocks.md)：marker block updater
+- [`specs/write-safety.md`](specs/write-safety.md)：lock、backup、atomic write、rollback
 - [`specs/integrations.md`](specs/integrations.md)：agent hooks 與 optional integrations
 - [`specs/team-sharing.md`](specs/team-sharing.md)：Team Vault、promotion workflow、read-only publishing
 - [`specs/templates.md`](specs/templates.md)：MVP templates

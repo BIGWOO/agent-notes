@@ -21,6 +21,8 @@ Source: 從 `docs/PRD.md` 拆分整理
 - trace 測試：decision/task/sourceRef 可回溯到 source index 與 session card
 - dry-run 測試：capture 與 integrate 不寫檔
 - public-safe 測試：`team-safe/public-safe` 的 frontmatter、body、marker diff 命中 blocking pattern 時回 `PRIVATE_DATA_RISK` 且不寫檔
+- write-safety 測試：dry-run 不建立 lock/backup/temp file、lock conflict、backup fail、target hash changed、rollback
+- summary parser 測試：固定 heading 順序、fenced code 內 heading 忽略、derived decision/task/context item extraction
 - init 測試：fresh、already-initialized、partial-init、existing-valid-vault rejection、existing-non-agent-dir、unsafe git worktree、non-interactive missing flags
 - init rollback/resume 測試：中途失敗不得留下 tracked private data
 - locale/template 測試：`zh-TW` UI template 仍保留英文 machine headings
@@ -49,3 +51,4 @@ Source: 從 `docs/PRD.md` 拆分整理
 - `Doctor`：config missing、vault ignore、public-safe、provenance orphan
 - `Trace`：item、sourceRef、missing target、broken chain
 - `Integration`：list、dry-run、ephemeral binary、apply failure
+- `Write Safety`：dry-run、lock conflict、backup fail、rollback

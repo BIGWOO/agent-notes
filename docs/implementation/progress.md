@@ -13,7 +13,7 @@ Source: [`phase-1-plan.md`](phase-1-plan.md) 與 `docs/specs/`
 | P1-001 | Scaffold | planned | [`../specs/cli.md`](../specs/cli.md) | Node.js + TypeScript CLI 可顯示 help/version，build/test/lint 可執行 | 尚未開始實作 |
 | P1-002 | Schemas and Config | planned | [`../specs/schemas.md`](../specs/schemas.md) | local config、project map、session frontmatter schema 有驗證與 fixture tests | 尚未開始實作 |
 | P1-003 | Vault Init | planned | [`../specs/init-onboarding.md`](../specs/init-onboarding.md) | fresh/already/partial/unsafe/non-interactive init cases 有測試 | 近期優先 |
-| P1-004 | Project Map | planned | [`../specs/schemas.md`](../specs/schemas.md) | `project add/list/check` 可讀寫 project map 並避免絕對路徑外洩 | 尚未開始實作 |
+| P1-004 | Project Map | planned | [`../specs/cli.md`](../specs/cli.md)、[`../specs/schemas.md`](../specs/schemas.md) | `project add/list/check` 可讀寫或檢查 project map，且 read-only commands 不輸出絕對 repo path | 尚未開始實作 |
 | P1-005 | Capture | planned | [`../specs/cli.md`](../specs/cli.md)、[`../architecture/capture-pipeline.md`](../architecture/capture-pipeline.md) | 可解析 summary file、建立 session card、dry-run 不寫檔 | 尚未開始實作 |
 | P1-006 | Marker Updater | planned | [`../specs/marker-blocks.md`](../specs/marker-blocks.md) | marker replacement idempotent，衝突時保護人工內容 | 尚未開始實作 |
 | P1-007 | Context | planned | [`../architecture/context-pipeline.md`](../architecture/context-pipeline.md) | `context --repo` 輸出固定 section、bounded packet、item id、session 與 sourceRefs，且不讀 private paths | 尚未開始實作 |
@@ -22,6 +22,7 @@ Source: [`phase-1-plan.md`](phase-1-plan.md) 與 `docs/specs/`
 | P1-010 | Integrate Codex | planned | [`../specs/integrations.md`](../specs/integrations.md) | `integrate --list`、Codex dry-run、backup/apply safety 可驗證 | 尚未開始實作 |
 | P1-011 | Validation Gate | planned | [`validation.md`](validation.md) | phase 1 必要測試與 manual checklist 通過 | 尚未開始實作 |
 | P1-012 | Scenario Coverage | in-progress | [`scenario-matrix.md`](scenario-matrix.md) | Phase 1 情境都有 command、expected behavior 與 source spec | 已建立初版矩陣，需隨實作更新 |
+| P1-013 | Write Safety | planned | [`../specs/write-safety.md`](../specs/write-safety.md) | 寫檔 command 共用 write plan、lock、backup、atomic write 與 rollback fixtures | 尚未開始實作 |
 
 ## Milestone Rules
 

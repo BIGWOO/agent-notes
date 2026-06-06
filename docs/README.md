@@ -31,6 +31,7 @@ docs/
 │   ├── schemas.md
 │   ├── provenance.md
 │   ├── marker-blocks.md
+│   ├── write-safety.md
 │   ├── integrations.md
 │   ├── team-sharing.md
 │   ├── templates.md
