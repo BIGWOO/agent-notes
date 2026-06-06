@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
-import { defaultConfigDir, defaultConfigPath } from "../core/config.js";
+import { defaultConfigDir, defaultConfigPath, loadConfig } from "../core/config.js";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
 import { resolvePath, type PathOptions } from "../core/paths.js";
+import type { LocalConfig } from "../schemas/config.js";
 import {
   executeWriteBatch,
   prepareWriteBatch,
@@ -35,6 +36,7 @@ export interface InitResult {
   readonly result: WriteBatchResult;
   readonly configPath: string;
   readonly projectMapPath: string;
+  readonly status: "planned" | "already-initialized";
   readonly vaultPath: string;
 }
 
@@ -177,7 +179,7 @@ export async function runInitCommand(options: InitCommandOptions, context: InitC
 }
 
 export async function runInit(options: InitCommandOptions, context: InitContext = {}): Promise<InitResult> {
-  validateInitOptions(options);
+  validateStaticInitOptions(options);
 
   const locale = normalizeLocale(options.lang, context);
 
@@ -185,11 +187,36 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "不支援的 locale，請使用 en 或 zh-TW");
   }
 
-  const vaultPath = resolvePath(options.vaultPath ?? defaultVaultPath(context), context);
   const configDirectory = defaultConfigDir(context);
   const configPath = defaultConfigPath(context);
   const projectMapPath = path.join(configDirectory, "project-map.json");
   const operationId = "init";
+  const existingConfig = readExistingLocalConfig(context);
+  const vaultPath = resolvePath(options.vaultPath ?? existingConfig?.vaultPath ?? defaultVaultPath(context), context);
+
+  if (existingConfig !== undefined && isSamePath(vaultPath, existingConfig.vaultPath) && isValidAgentNotesVault(vaultPath)) {
+    const batch = prepareWriteBatch({
+      command: "init",
+      operationId,
+      writes: []
+    });
+
+    return {
+      batch,
+      result: {
+        operationId,
+        written: [],
+        skipped: [],
+        warnings: []
+      },
+      configPath,
+      projectMapPath,
+      status: "already-initialized",
+      vaultPath
+    };
+  }
+
+  validateWritableInitOptions(options);
 
   validateTargetVault(vaultPath);
 
@@ -220,11 +247,12 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     result: writeResult,
     configPath,
     projectMapPath,
+    status: "planned",
     vaultPath
   };
 }
 
-function validateInitOptions(options: InitCommandOptions): void {
+function validateStaticInitOptions(options: InitCommandOptions): void {
   if (options.resume === true || options.rollback === true || options.projectRepo !== undefined) {
     throw new AgentNotesError(ErrorCode.FEATURE_UNSUPPORTED, "init resume、rollback 與 first project onboarding 尚未實作");
   }
@@ -232,7 +260,9 @@ function validateInitOptions(options: InitCommandOptions): void {
   if (options.lang !== undefined && normalizeLocale(options.lang) === undefined) {
     throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "不支援的 locale，請使用 en 或 zh-TW");
   }
+}
 
+function validateWritableInitOptions(options: InitCommandOptions): void {
   if (options.dryRun === true) {
     return;
   }
@@ -249,6 +279,22 @@ function validateInitOptions(options: InitCommandOptions): void {
       "非互動 init 需要 --yes、--lang、--vault-path、--no-integrations、--no-project"
     );
   }
+}
+
+function readExistingLocalConfig(context: InitContext): LocalConfig | undefined {
+  try {
+    return loadConfig(context);
+  } catch (error) {
+    if (error instanceof AgentNotesError && error.code === ErrorCode.CONFIG_NOT_FOUND) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function isSamePath(left: string, right: string): boolean {
+  return path.resolve(left) === path.resolve(right);
 }
 
 function normalizeLocale(locale?: string, context: PathOptions = {}): "en" | "zh-TW" | undefined {
@@ -302,11 +348,15 @@ function isInsideGitWorktree(targetPath: string): boolean {
   const existingParent = nearestExistingParent(targetPath);
 
   try {
-    const gitRoot = execFileSync("git", ["-C", existingParent, "rev-parse", "--show-toplevel"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-    const relative = path.relative(gitRoot, targetPath);
+    const gitRoot = realpathSync.native(
+      execFileSync("git", ["-C", existingParent, "rev-parse", "--show-toplevel"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"]
+      }).trim()
+    );
+    const canonicalParent = realpathSync.native(existingParent);
+    const canonicalTarget = path.join(canonicalParent, path.relative(existingParent, targetPath));
+    const relative = path.relative(gitRoot, canonicalTarget);
 
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   } catch {
@@ -399,7 +449,11 @@ function buildInitWrites(input: {
 
 function formatInitResult(result: InitResult, dryRun: boolean): string {
   const lines = [
-    dryRun ? "Agent Notes init dry-run" : "Agent Notes init complete",
+    result.status === "already-initialized"
+      ? "Agent Notes already initialized"
+      : dryRun
+        ? "Agent Notes init dry-run"
+        : "Agent Notes init complete",
     `operationId: ${result.batch.plan.operationId}`,
     `vaultPath: ${formatOutputPath(result.vaultPath, dryRun, "vault path")}`,
     `configPath: ${formatOutputPath(result.configPath, dryRun, "local config path")}`,
@@ -411,6 +465,9 @@ function formatInitResult(result: InitResult, dryRun: boolean): string {
 
   if (dryRun) {
     lines.push("no files written");
+  } else if (result.status === "already-initialized") {
+    lines.push("written: 0");
+    lines.push("next: agent-notes doctor");
   } else {
     lines.push(`written: ${result.result.written.length}`);
   }

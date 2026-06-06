@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,6 +34,57 @@ function writeFixtureFile(targetPath: string, content: string): void {
     recursive: true
   });
   writeFileSync(targetPath, content);
+}
+
+function createValidVault(vaultPath: string): void {
+  writeFixtureFile(path.join(vaultPath, ".gitignore"), "private/\n.agent-notes/\n");
+  writeFixtureFile(path.join(vaultPath, "00-Meta", "Systems", "agent-note-protocol.md"), "# Agent Notes Protocol\n");
+  writeFixtureFile(path.join(vaultPath, "06-Templates", "summary-file.md"), "## Summary\n");
+}
+
+function writeLocalConfig(workspace: ReturnType<typeof makeWorkspace>, vaultPath = workspace.vaultPath): void {
+  const projectMapPath = path.join(workspace.configHome, "agent-notes", "project-map.json");
+
+  writeFixtureFile(
+    path.join(workspace.configHome, "agent-notes", "config.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        locale: "zh-TW",
+        vaultPath,
+        projectMapPath,
+        privacy: {
+          defaultVisibility: "private",
+          recordAbsolutePathsInNotes: false,
+          copyRawTranscripts: false
+        },
+        sharing: {
+          mode: "personal",
+          access: "read-write",
+          agentWritePolicy: "local-only"
+        },
+        integrations: {
+          codex: {
+            enabled: false
+          }
+        }
+      },
+      null,
+      2
+    )}\n`
+  );
+  writeFixtureFile(
+    projectMapPath,
+    `${JSON.stringify(
+      {
+        version: 1,
+        vaultPath,
+        projects: []
+      },
+      null,
+      2
+    )}\n`
+  );
 }
 
 function expectAgentNotesError(error: unknown, code: ErrorCode): void {
@@ -157,6 +209,66 @@ describe("init command", () => {
     }
   });
 
+  it("已初始化且 config 指向 valid vault 時可重跑且不寫入", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      createValidVault(workspace.vaultPath);
+      writeLocalConfig(workspace);
+
+      const result = await runInit(
+        {},
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.status).toBe("already-initialized");
+      expect(result.result.written).toHaveLength(0);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+      expect(readFileSync(path.join(workspace.vaultPath, "00-Meta", "Systems", "agent-note-protocol.md"), "utf8")).toBe(
+        "# Agent Notes Protocol\n"
+      );
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("既有 valid vault 但 local config 未指向時拒絕採用", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      createValidVault(workspace.vaultPath);
+
+      await runInit(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.VAULT_ALREADY_INITIALIZED);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
   it("缺少非互動必要 flags 回 NON_INTERACTIVE_REQUIRED", async () => {
     const workspace = makeWorkspace();
 
@@ -209,6 +321,146 @@ describe("init command", () => {
       throw new Error("expected runInit to fail");
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.VAULT_EXISTS_NON_EMPTY);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("既有 target 是檔案時回 PATH_INVALID", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeFixtureFile(workspace.vaultPath, "not a directory");
+
+      await runInit(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PATH_INVALID);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("target 位於 Git worktree 內時回 PATH_UNSAFE 且不寫檔", async () => {
+    const workspace = makeWorkspace();
+    const unsafeVaultPath = path.join(workspace.root, "repo", "Agent-Notes");
+
+    try {
+      mkdirSync(path.dirname(unsafeVaultPath), {
+        recursive: true
+      });
+      execFileSync("git", ["init"], {
+        cwd: path.dirname(unsafeVaultPath),
+        stdio: "ignore"
+      });
+
+      await runInit(
+        {
+          dryRun: true,
+          vaultPath: unsafeVaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PATH_UNSAFE);
+      expect(existsSync(unsafeVaultPath)).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "config.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("明確允許 Git worktree vault 時可 dry-run 且不寫檔", async () => {
+    const workspace = makeWorkspace();
+    const unsafeVaultPath = path.join(workspace.root, "repo", "Agent-Notes");
+
+    try {
+      mkdirSync(path.dirname(unsafeVaultPath), {
+        recursive: true
+      });
+      execFileSync("git", ["init"], {
+        cwd: path.dirname(unsafeVaultPath),
+        stdio: "ignore"
+      });
+
+      const result = await runInit(
+        {
+          dryRun: true,
+          vaultPath: unsafeVaultPath,
+          integrations: false,
+          project: false,
+          allowGitWorktreeVault: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.batch.plan.filesToCreate.length).toBeGreaterThan(0);
+      expect(existsSync(unsafeVaultPath)).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "config.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("既有 local config 無效時回 CONFIG_INVALID 且不覆蓋", async () => {
+    const workspace = makeWorkspace();
+    const configPath = path.join(workspace.configHome, "agent-notes", "config.json");
+
+    try {
+      writeFixtureFile(configPath, "{ invalid json");
+
+      await runInit(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+      expect(readFileSync(configPath, "utf8")).toBe("{ invalid json");
     } finally {
       cleanup(workspace.root);
     }
