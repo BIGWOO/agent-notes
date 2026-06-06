@@ -86,7 +86,7 @@ Version 0.1 應包含：
 - 實作 session card writer
 - 實作 source index
 - 實作 provenance log append
-- 實作 optional raw copy
+- raw transcript copy 不屬於 Phase 1；`--source-file` 只建立 local pointer
 - 實作 inbox / daily / area / personal / project destinations
 
 ## Marker Updater
@@ -103,23 +103,26 @@ Version 0.1 應包含：
 - 實作 `agent-notes context --repo`
 - 讀取 project README、active tasks、decision log、pitfalls、recent sessions
 - context packet 保留 item id 與 sourceRefs
-- 實作 size bound
-- 確認不讀 `private/raw-sessions/`
+- 實作固定 section 順序與 size bound；預設 12000 chars
+- 超過 `--max-chars` 時以 deterministic 順序截短並標示 omitted count
+- 確認不讀 `private/`、`.agent-notes/` 或 raw transcript
 
 ## Doctor
 
-- 驗證 config、vault、project map、必要目錄、writable 狀態
-- 檢查 private path 是否被 Git tracked
-- 檢查 source index 與 raw storage
+- 實作 `--check <name>` 與 `--json`
+- 驗證 config、vault、project map、templates、marker、provenance、public-safe、integrations
+- 檢查 private paths 是否被 ignore，tracked Markdown 是否含 private pattern
 - 檢查 orphan sourceRefs、missing provenance records 與無來源 generated items
-- 檢查 supported integrations
+- Phase 1 不自動修復，只輸出 blocking code、affected paths 與建議
 
 ## Trace
 
 - 實作 `agent-notes trace <itemId|sessionId|sourceRef>`
 - 讀取 source index、provenance log 與 session cards
-- 輸出來源摘要、session id、note path、derivedFrom 與 content hash
-- 不把本機絕對路徑寫入 Markdown
+- 依 sourceRef、sessionId、itemId 三種目標使用固定查找順序
+- 輸出來源摘要、session id、note path、derivedFrom、content hash 與 warning
+- 找不到 source、target 或 provenance chain 時回對應穩定錯誤碼
+- 不把本機絕對路徑寫入 tracked Markdown
 
 ## Integrate Codex
 
@@ -136,7 +139,7 @@ Version 0.1 應包含：
 - 整合測試：init -> project add -> capture -> context -> doctor
 - trace 測試：decision/task/sourceRef 可回溯到 source index 與 session card
 - dry-run 測試：capture 與 integrate 不寫檔
-- public-safe 測試：session card 不含絕對路徑
+- public-safe 測試：`team-safe/public-safe` 的 frontmatter、body、marker diff 命中 blocking pattern 時回 `PRIVATE_DATA_RISK` 且不寫檔
 - init 測試：fresh、already-initialized、partial-init、existing-valid-vault rejection、existing-non-agent-dir、unsafe git worktree、non-interactive missing flags
 - init rollback/resume 測試：中途失敗不得留下 tracked private data
 - locale/template 測試：`zh-TW` UI template 仍保留英文 machine headings

@@ -77,6 +77,7 @@ Version 0.1 聚焦 Local CLI：
 
 - [`implementation/phase-1-plan.md`](implementation/phase-1-plan.md)：Phase 1 實作切片
 - [`implementation/progress.md`](implementation/progress.md)：實作進度追蹤
+- [`implementation/scenario-matrix.md`](implementation/scenario-matrix.md)：使用情境模擬與規格覆蓋檢查
 - [`implementation/validation.md`](implementation/validation.md)：驗證策略與 manual checklist
 - [`implementation/open-questions.md`](implementation/open-questions.md)：未決問題
 - [`decisions/ADR-0001-runtime-node-typescript.md`](decisions/ADR-0001-runtime-node-typescript.md)：runtime 選型決策

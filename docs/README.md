@@ -11,7 +11,8 @@ Last Updated: 2026-06-06
 2. [`product/vision.md`](product/vision.md)：確認產品邊界
 3. [`implementation/progress.md`](implementation/progress.md)：確認目前進度
 4. 對應 workstream 的 `specs/` 與 `architecture/` 文件
-5. [`implementation/validation.md`](implementation/validation.md)：確認驗收與測試
+5. [`implementation/scenario-matrix.md`](implementation/scenario-matrix.md)：模擬使用情境並檢查規格覆蓋
+6. [`implementation/validation.md`](implementation/validation.md)：確認驗收與測試
 
 ## 文件分類
 
@@ -41,6 +42,7 @@ docs/
 ├── implementation/
 │   ├── phase-1-plan.md
 │   ├── progress.md
+│   ├── scenario-matrix.md
 │   ├── validation.md
 │   └── open-questions.md
 └── decisions/
