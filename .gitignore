@@ -1,0 +1,39 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+.turbo/
+.cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+
+# Local Agent Notes config
+.agent-notes.local.json
+.agent-notes.state.json
+.agent-notes/
+
+# Private docs and deployment-specific maps
+docs/internal/
+private/
+project-map.local.json
+project-map.private.json
+*channel-mapping*.json
+*secret*.json
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
