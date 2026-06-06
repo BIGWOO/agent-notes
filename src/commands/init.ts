@@ -63,6 +63,7 @@ export interface InitResult {
   readonly result: WriteBatchResult;
   readonly configPath: string;
   readonly firstProject?: InitFirstProject;
+  readonly integrations?: InitIntegrationOnboarding;
   readonly projectMapPath: string;
   readonly status: "planned" | "already-initialized" | "resumed" | "rolled-back";
   readonly vaultPath: string;
@@ -103,6 +104,16 @@ interface InitFirstProject {
   readonly entry: ProjectMapEntry;
   readonly repoSummary: RepoSummary;
   readonly source: "explicit" | "cwd";
+}
+
+type InitIntegrationAgent = "codex";
+type InitComingSoonIntegrationAgent = "claude-code" | "openclaw";
+
+interface InitIntegrationOnboarding {
+  readonly status: "deferred" | "preview";
+  readonly selectedAgents: readonly InitIntegrationAgent[];
+  readonly nextCommands: readonly string[];
+  readonly comingSoonAgents: readonly InitComingSoonIntegrationAgent[];
 }
 
 const vaultGitignore = ["private/", ".agent-notes/", ".DS_Store", ""].join("\n");
@@ -342,6 +353,7 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
   }
 
   const firstProject = await resolveFirstProjectOnboarding(options, context, vaultPath);
+  const integrations = await resolveIntegrationOnboarding(options, context);
 
   const writes = buildInitWrites({
     configPath,
@@ -368,6 +380,7 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
   await confirmInitWritePlan(options, context, {
     configPath,
     ...(firstProject === undefined ? {} : { firstProject }),
+    ...(integrations === undefined ? {} : { integrations }),
     projectMapPath,
     vaultPath,
     batch
@@ -390,6 +403,7 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
   return {
     batch,
     ...(firstProject === undefined ? {} : { firstProject }),
+    ...(integrations === undefined ? {} : { integrations }),
     result: writeResult,
     configPath,
     projectMapPath,
@@ -420,7 +434,7 @@ function validateWritableInitOptions(options: InitCommandOptions, context: InitC
   if (
     options.lang === undefined ||
     options.vaultPath === undefined ||
-    options.integrations !== false ||
+    (options.yes === true && options.integrations !== false) ||
     (options.yes === true && options.project !== false && options.projectRepo === undefined)
   ) {
     throw new AgentNotesError(
@@ -444,6 +458,7 @@ async function confirmInitWritePlan(
     readonly batch: PreparedWriteBatch;
     readonly configPath: string;
     readonly firstProject?: InitFirstProject;
+    readonly integrations?: InitIntegrationOnboarding;
     readonly projectMapPath: string;
     readonly vaultPath: string;
   }
@@ -463,6 +478,12 @@ async function confirmInitWritePlan(
         : [
             `- first project: ${input.firstProject.entry.id}`,
             `- first project repo: ${input.firstProject.repoSummary.basename}#${input.firstProject.repoSummary.shortHash}`
+          ]),
+      ...(input.integrations === undefined
+        ? []
+        : [
+            `- integrations: ${formatIntegrationStatus(input.integrations)}`,
+            ...input.integrations.nextCommands.map((command) => `- integration next: ${command}`)
           ]),
       `- files to create: ${input.batch.plan.filesToCreate.length}`,
       `- files to modify: ${input.batch.plan.filesToModify.length}`
@@ -513,6 +534,50 @@ async function resolveFirstProjectOnboarding(
   }
 
   return createFirstProjectPlan(cwdProjectPath, vaultPath, "cwd");
+}
+
+async function resolveIntegrationOnboarding(
+  options: InitCommandOptions,
+  context: InitContext
+): Promise<InitIntegrationOnboarding | undefined> {
+  if (options.integrations === false) {
+    return undefined;
+  }
+
+  if (options.dryRun === true) {
+    return createIntegrationPreview();
+  }
+
+  const confirmed = await context.confirm?.({
+    message: [
+      "Agent Notes can preview optional AI agent integrations:",
+      "- codex: next Phase 1 integration workstream",
+      "- claude-code: coming soon",
+      "- openclaw: coming soon",
+      "- init will not modify hook settings"
+    ].join("\n"),
+    defaultValue: false
+  });
+
+  return confirmed === true ? createIntegrationPreview() : createIntegrationDeferred();
+}
+
+function createIntegrationPreview(): InitIntegrationOnboarding {
+  return {
+    status: "preview",
+    selectedAgents: ["codex"],
+    nextCommands: ["agent-notes integrate --list"],
+    comingSoonAgents: ["claude-code", "openclaw"]
+  };
+}
+
+function createIntegrationDeferred(): InitIntegrationOnboarding {
+  return {
+    status: "deferred",
+    selectedAgents: [],
+    nextCommands: ["agent-notes integrate --list"],
+    comingSoonAgents: ["claude-code", "openclaw"]
+  };
 }
 
 function createFirstProjectPlan(repoPath: string, vaultPath: string, source: InitFirstProject["source"]): InitFirstProject {
@@ -1484,6 +1549,14 @@ function formatInitResult(result: InitResult, dryRun: boolean): string {
     lines.push(`firstProjectNotePath: ${result.firstProject.entry.notePath}`);
   }
 
+  if (result.integrations !== undefined) {
+    lines.push(`integrations: ${formatIntegrationStatus(result.integrations)}`);
+
+    for (const command of result.integrations.nextCommands) {
+      lines.push(`integrationNext: ${command}`);
+    }
+  }
+
   if (result.status === "rolled-back") {
     const rollbackSummary = result.rollbackSummary ?? {
       filesToDelete: [],
@@ -1529,6 +1602,14 @@ function headlineFor(status: InitResult["status"], dryRun: boolean): string {
   }
 
   return dryRun ? "Agent Notes init dry-run" : "Agent Notes init complete";
+}
+
+function formatIntegrationStatus(integrations: InitIntegrationOnboarding): string {
+  if (integrations.status === "deferred") {
+    return "deferred";
+  }
+
+  return `preview ${integrations.selectedAgents.join(",")}`;
 }
 
 function formatOutputPath(targetPath: string, dryRun: boolean, label: string): string {

@@ -413,6 +413,41 @@ describe("init command", () => {
     }
   });
 
+  it("dry-run 未指定 --no-integrations 時顯示 integration preview next step 且不寫檔", async () => {
+    const workspace = makeWorkspace();
+    const stdout: string[] = [];
+
+    try {
+      const result = await runInitCommand(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          stdout: (value) => stdout.push(value)
+        }
+      );
+      const output = stdout.join("");
+
+      expect(result.integrations?.status).toBe("preview");
+      expect(result.integrations?.selectedAgents).toEqual(["codex"]);
+      expect(output).toContain("integrations: preview codex");
+      expect(output).toContain("integrationNext: agent-notes integrate --list");
+      expect(output).not.toContain(workspace.home);
+      expect(existsSync(workspace.vaultPath)).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
   it("非互動 apply 建立 vault skeleton、config 與 project map", async () => {
     const workspace = makeWorkspace();
 
@@ -457,6 +492,86 @@ describe("init command", () => {
         projects: []
       });
       expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式可延後 integration onboarding 並完成 init", async () => {
+    const workspace = makeWorkspace();
+    const prompts: string[] = [];
+
+    try {
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return prompts.length === 2;
+          }
+        }
+      );
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain("optional AI agent integrations");
+      expect(prompts[1]).toContain("integrations: deferred");
+      expect(result.integrations?.status).toBe("deferred");
+      expect(result.integrations?.nextCommands).toEqual(["agent-notes integrate --list"]);
+      expect(result.result.written.length).toBeGreaterThan(0);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式可選擇 Codex integration preview 但不寫 hook 設定", async () => {
+    const workspace = makeWorkspace();
+    const prompts: string[] = [];
+    const stdout: string[] = [];
+
+    try {
+      const result = await runInitCommand(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          },
+          stdout: (value) => stdout.push(value)
+        }
+      );
+      const output = stdout.join("");
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain("codex: next Phase 1 integration workstream");
+      expect(prompts[1]).toContain("integrations: preview codex");
+      expect(result.integrations?.status).toBe("preview");
+      expect(result.integrations?.selectedAgents).toEqual(["codex"]);
+      expect(output).toContain("integrationNext: agent-notes integrate --list");
+      expect(output).not.toContain(".codex");
+      expect(existsSync(path.join(workspace.home, ".codex"))).toBe(false);
     } finally {
       cleanup(workspace.root);
     }
@@ -723,6 +838,35 @@ describe("init command", () => {
       throw new Error("expected runInit to fail");
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.NON_INTERACTIVE_REQUIRED);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("非互動 --yes 未明確 --no-integrations 時回 NON_INTERACTIVE_REQUIRED", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.NON_INTERACTIVE_REQUIRED);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
     } finally {
       cleanup(workspace.root);
     }
