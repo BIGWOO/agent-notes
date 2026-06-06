@@ -175,6 +175,36 @@ describe("project map schema", () => {
       expectAgentNotesError(error, ErrorCode.PROJECT_MAP_INVALID);
     }
   });
+
+  it("拒絕 duplicate notePath", async () => {
+    try {
+      parseProjectMap({
+        version: 1,
+        vaultPath: "/tmp/agent-notes",
+        projects: [
+          {
+            id: "alpha",
+            name: "Alpha",
+            repoId: "alpha",
+            repoPaths: ["/tmp/alpha"],
+            notePath: "03-Projects/Same",
+            visibility: "private"
+          },
+          {
+            id: "beta",
+            name: "Beta",
+            repoId: "beta",
+            repoPaths: ["/tmp/beta"],
+            notePath: "03-Projects/Same",
+            visibility: "private"
+          }
+        ]
+      });
+      throw new Error("expected parseProjectMap to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PROJECT_MAP_INVALID);
+    }
+  });
 });
 
 describe("session and provenance schemas", () => {

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { z } from "zod";
 import { ErrorCode } from "../core/errors.js";
 import {
@@ -31,8 +32,11 @@ export const projectMapSchema = z
   .superRefine((value, context) => {
     const projectIds = new Set<string>();
     const repoIds = new Set<string>();
+    const notePaths = new Set<string>();
 
     for (const project of value.projects) {
+      const notePath = path.posix.normalize(project.notePath.replaceAll("\\", "/"));
+
       if (projectIds.has(project.id)) {
         context.addIssue({
           code: "custom",
@@ -47,8 +51,16 @@ export const projectMapSchema = z
         });
       }
 
+      if (notePaths.has(notePath)) {
+        context.addIssue({
+          code: "custom",
+          message: `notePath 重複: ${project.notePath}`
+        });
+      }
+
       projectIds.add(project.id);
       repoIds.add(project.repoId);
+      notePaths.add(notePath);
     }
   });
 

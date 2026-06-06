@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
 import { registerInitCommand } from "./init.js";
+import { registerProjectCommands } from "./project.js";
 
 export function registerCommands(program: Command): void {
   registerInitCommand(program);
@@ -11,35 +12,6 @@ export function registerCommands(program: Command): void {
   registerTraceCommand(program);
   registerIntegrateCommand(program);
   registerPostMvpCommands(program);
-}
-
-function registerProjectCommands(program: Command): void {
-  const project = program.command("project").description("管理 local/private project map");
-
-  project
-    .command("add")
-    .description("把 repo 加入 project map")
-    .requiredOption("--repo <path>", "repo 路徑")
-    .option("--name <name>", "project 顯示名稱")
-    .option("--project-id <id>", "指定 project id")
-    .option("--dry-run", "只顯示 write plan，不寫入檔案")
-    .action(notImplemented("project add"));
-
-  project
-    .command("list")
-    .description("列出已知 projects")
-    .option("--repo <path>", "標示指定 repo 是否已匹配 project")
-    .action(notImplemented("project list"));
-
-  project
-    .command("check")
-    .description("檢查 repo 是否可解析到 project")
-    .option("--repo <path>", "repo 路徑，未提供時使用目前工作目錄")
-    .action(notImplemented("project check"));
-
-  project.action(() => {
-    project.outputHelp();
-  });
 }
 
 function registerCaptureCommand(program: Command): void {
