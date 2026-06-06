@@ -144,11 +144,21 @@ agent-notes init
 
 預期結果：
 
+- `init` 第一題先選擇介面語言
 - `init` 建立 local config 與 vault 目錄結構
 - `doctor` 檢查本機設定、vault、project map 與可選整合
 - `integrate --list` 顯示目前支援的 agent integration
 - `integrate <agent> --dry-run` 顯示會修改哪些本機設定與呼叫哪些 command
 - 只有使用者明確執行 `integrate <agent> --apply` 時，才允許寫入 hook 設定
+
+`init` 的語言選擇規則：
+
+- 產品預設語言為英文
+- 第一題提供 `English` 與 `繁體中文`
+- 使用者可用 `agent-notes init --lang en` 或 `agent-notes init --lang zh-TW` 跳過互動
+- 偵測到系統 locale 為 `zh_TW` 或 `zh-TW` 時，將 `繁體中文` 排在第一個選項或設為預選
+- 選定語言後，後續提示、錯誤訊息與預設模板跟著該語言產生
+- 語言設定寫入 local config，例如 `locale: "zh-TW"`
 
 ## 7. 資訊架構
 
@@ -389,13 +399,14 @@ agent-notes-private/         private repo
 
 `init` 是使用者第一次執行時的主要入口。MVP 的 `init` 應聚焦在建立 local-first runtime，而不是直接接管 agent：
 
-1. 選擇或建立 vault path
-2. 建立必要目錄
-3. 建立 `~/.config/agent-notes/config.json`
-4. 建立 public-safe sample project map
-5. 顯示 manual capture 與 context command 範例
-6. 提示可執行 `agent-notes integrate --list`
-7. 自動執行或建議執行 `agent-notes doctor`
+1. 選擇語言，並依系統 locale 調整預選順序
+2. 選擇或建立 vault path
+3. 建立必要目錄
+4. 建立 `~/.config/agent-notes/config.json`
+5. 建立 public-safe sample project map
+6. 顯示 manual capture 與 context command 範例
+7. 提示可執行 `agent-notes integrate --list`
+8. 自動執行或建議執行 `agent-notes doctor`
 
 Hook integration 必須是 `init` 之後的獨立步驟。這能讓非技術使用者先完成安全初始化，也讓進階使用者清楚知道何時會修改本機 agent 設定。
 
