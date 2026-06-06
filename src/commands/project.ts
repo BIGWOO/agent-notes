@@ -50,7 +50,7 @@ export interface ProjectCheckResult {
   readonly repoSummary: RepoSummary;
 }
 
-interface RepoSummary {
+export interface RepoSummary {
   readonly basename: string;
   readonly repoId: string;
   readonly shortHash: string;
@@ -291,7 +291,7 @@ function loadProjectMap(projectMapPath: string): ProjectMap {
   return parseProjectMap(parsed);
 }
 
-function resolveRepoRoot(repoPathInput: string, context: ProjectContext): string {
+export function resolveRepoRoot(repoPathInput: string, context: ProjectContext): string {
   let repoPath: string;
 
   try {
@@ -320,7 +320,7 @@ function resolveRepoRoot(repoPathInput: string, context: ProjectContext): string
   }
 }
 
-function createProjectEntry(input: {
+export function createProjectEntry(input: {
   readonly projectMap: ProjectMap;
   readonly projectId?: string;
   readonly projectName?: string;
@@ -364,15 +364,21 @@ function buildProjectAddWrites(
   vaultPath: string,
   entry: ProjectMapEntry
 ): FileWriteInput[] {
-  const projectDirectory = path.join(vaultPath, entry.notePath);
-  const render = (template: string): string => template.replaceAll("{{projectName}}", entry.name);
-
   return [
     {
       targetPath: projectMapPath,
       content: `${JSON.stringify(projectMap, null, 2)}\n`,
       backupKey: "project-map.json"
     },
+    ...buildProjectContextWrites(vaultPath, entry)
+  ];
+}
+
+export function buildProjectContextWrites(vaultPath: string, entry: ProjectMapEntry): FileWriteInput[] {
+  const projectDirectory = path.join(vaultPath, entry.notePath);
+  const render = (template: string): string => template.replaceAll("{{projectName}}", entry.name);
+
+  return [
     {
       targetPath: path.join(projectDirectory, "README.md"),
       content: render(projectReadmeTemplate),
@@ -420,7 +426,7 @@ function findProjectByRepoPath(projectMap: ProjectMap, repoPath: string): Projec
   );
 }
 
-function summarizeRepo(repoPath: string): RepoSummary {
+export function summarizeRepo(repoPath: string): RepoSummary {
   const basename = path.basename(repoPath);
 
   return {

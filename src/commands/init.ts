@@ -13,10 +13,18 @@ import {
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
+import {
+  buildProjectContextWrites,
+  createProjectEntry,
+  resolveRepoRoot,
+  summarizeRepo,
+  type RepoSummary
+} from "./project.js";
 import { defaultConfigDir, defaultConfigPath, loadConfig } from "../core/config.js";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
-import { resolvePath, type PathOptions } from "../core/paths.js";
+import { isVaultRelativePath, resolvePath, type PathOptions } from "../core/paths.js";
 import type { LocalConfig } from "../schemas/config.js";
+import { parseProjectMap, type ProjectMapEntry } from "../schemas/projectMap.js";
 import {
   executeWriteBatch,
   hashContent,
@@ -54,6 +62,7 @@ export interface InitResult {
   readonly batch: PreparedWriteBatch;
   readonly result: WriteBatchResult;
   readonly configPath: string;
+  readonly firstProject?: InitFirstProject;
   readonly projectMapPath: string;
   readonly status: "planned" | "already-initialized" | "resumed" | "rolled-back";
   readonly vaultPath: string;
@@ -76,6 +85,8 @@ interface InitStateFile {
     readonly targetPath: string;
     readonly contentHash: string;
   }[];
+  readonly firstProject?: ProjectMapEntry;
+  readonly firstProjectSource?: InitFirstProject["source"];
 }
 
 interface InitStateStore {
@@ -86,6 +97,12 @@ interface InitRollbackSummary {
   readonly filesToDelete: readonly string[];
   readonly filesAlreadyMissing: readonly string[];
   readonly modifiedConflicts: readonly string[];
+}
+
+interface InitFirstProject {
+  readonly entry: ProjectMapEntry;
+  readonly repoSummary: RepoSummary;
+  readonly source: "explicit" | "cwd";
 }
 
 const vaultGitignore = ["private/", ".agent-notes/", ".DS_Store", ""].join("\n");
@@ -324,8 +341,11 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     throw new AgentNotesError(ErrorCode.PATH_UNSAFE, "vault path 位於 Git worktree 內");
   }
 
+  const firstProject = await resolveFirstProjectOnboarding(options, context, vaultPath);
+
   const writes = buildInitWrites({
     configPath,
+    ...(firstProject === undefined ? {} : { firstProject: firstProject.entry }),
     locale,
     projectMapPath,
     vaultPath
@@ -340,12 +360,14 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     locale,
     operationId,
     projectMapPath,
+    ...(firstProject === undefined ? {} : { firstProject }),
     vaultPath,
     writes
   });
 
   await confirmInitWritePlan(options, context, {
     configPath,
+    ...(firstProject === undefined ? {} : { firstProject }),
     projectMapPath,
     vaultPath,
     batch
@@ -367,6 +389,7 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
 
   return {
     batch,
+    ...(firstProject === undefined ? {} : { firstProject }),
     result: writeResult,
     configPath,
     projectMapPath,
@@ -380,8 +403,8 @@ function validateStaticInitOptions(options: InitCommandOptions): void {
     throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "init 不能同時使用 --resume 與 --rollback");
   }
 
-  if (options.projectRepo !== undefined) {
-    throw new AgentNotesError(ErrorCode.FEATURE_UNSUPPORTED, "first project onboarding 尚未實作");
+  if (options.project === false && options.projectRepo !== undefined) {
+    throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "init 不能同時使用 --no-project 與 --project-repo");
   }
 
   if (options.lang !== undefined && normalizeLocale(options.lang) === undefined) {
@@ -398,11 +421,11 @@ function validateWritableInitOptions(options: InitCommandOptions, context: InitC
     options.lang === undefined ||
     options.vaultPath === undefined ||
     options.integrations !== false ||
-    options.project !== false
+    (options.yes === true && options.project !== false && options.projectRepo === undefined)
   ) {
     throw new AgentNotesError(
       ErrorCode.NON_INTERACTIVE_REQUIRED,
-      "非互動 init 需要 --yes、--lang、--vault-path、--no-integrations、--no-project"
+      "非互動 init 需要 --yes、--lang、--vault-path、--no-integrations，並提供 --no-project 或 --project-repo"
     );
   }
 
@@ -420,6 +443,7 @@ async function confirmInitWritePlan(
   input: {
     readonly batch: PreparedWriteBatch;
     readonly configPath: string;
+    readonly firstProject?: InitFirstProject;
     readonly projectMapPath: string;
     readonly vaultPath: string;
   }
@@ -434,6 +458,12 @@ async function confirmInitWritePlan(
       `- vault: ${input.vaultPath}`,
       `- local config: ${input.configPath}`,
       `- project map: ${input.projectMapPath}`,
+      ...(input.firstProject === undefined
+        ? []
+        : [
+            `- first project: ${input.firstProject.entry.id}`,
+            `- first project repo: ${input.firstProject.repoSummary.basename}#${input.firstProject.repoSummary.shortHash}`
+          ]),
       `- files to create: ${input.batch.plan.filesToCreate.length}`,
       `- files to modify: ${input.batch.plan.filesToModify.length}`
     ].join("\n"),
@@ -443,6 +473,115 @@ async function confirmInitWritePlan(
   if (confirmed !== true) {
     throw new AgentNotesError(ErrorCode.INIT_CANCELLED, "使用者取消 init");
   }
+}
+
+async function resolveFirstProjectOnboarding(
+  options: InitCommandOptions,
+  context: InitContext,
+  vaultPath: string
+): Promise<InitFirstProject | undefined> {
+  if (options.project === false) {
+    return undefined;
+  }
+
+  if (options.projectRepo !== undefined) {
+    return createFirstProjectPlan(resolveRepoRoot(options.projectRepo, context), vaultPath, "explicit");
+  }
+
+  if (options.dryRun === true) {
+    return undefined;
+  }
+
+  const cwdProjectPath = resolveSafeCwdProjectRepo(context, vaultPath);
+
+  if (cwdProjectPath === undefined || context.confirm === undefined) {
+    return undefined;
+  }
+
+  const repoSummary = summarizeRepo(cwdProjectPath);
+  const confirmed = await context.confirm({
+    message: [
+      "Agent Notes can add the current git repo as the first project:",
+      `- repo: ${repoSummary.basename}#${repoSummary.shortHash}`,
+      "- no absolute repo path will be written to tracked Markdown"
+    ].join("\n"),
+    defaultValue: false
+  });
+
+  if (confirmed !== true) {
+    return undefined;
+  }
+
+  return createFirstProjectPlan(cwdProjectPath, vaultPath, "cwd");
+}
+
+function createFirstProjectPlan(repoPath: string, vaultPath: string, source: InitFirstProject["source"]): InitFirstProject {
+  const entry = createProjectEntry({
+    projectMap: {
+      version: 1,
+      vaultPath,
+      projects: []
+    },
+    repoPath,
+    vaultPath
+  });
+
+  assertFirstProjectTrackedMarkdownSafe(vaultPath, entry, ErrorCode.PRIVATE_DATA_RISK);
+
+  return {
+    entry,
+    repoSummary: summarizeRepo(repoPath),
+    source
+  };
+}
+
+function resolveSafeCwdProjectRepo(context: InitContext, vaultPath: string): string | undefined {
+  const cwd = context.cwd ?? process.cwd();
+  let repoPath: string;
+
+  try {
+    const gitRoot = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+
+    repoPath = resolveRepoRoot(gitRoot, context);
+  } catch {
+    return undefined;
+  }
+
+  return isSafeFirstProjectRepo(repoPath, vaultPath, context) ? repoPath : undefined;
+}
+
+function isSafeFirstProjectRepo(repoPath: string, vaultPath: string, context: InitContext): boolean {
+  const resolvedRepoPath = canonicalExistingPath(repoPath);
+  const resolvedVaultPath = canonicalPlannedPath(vaultPath);
+  const homePathInput = context.homeDir ?? context.env?.HOME ?? process.env.HOME;
+  const homePath =
+    homePathInput === undefined || homePathInput.trim() === "" ? undefined : canonicalPlannedPath(homePathInput);
+  const documentsPath = homePath === undefined ? undefined : canonicalPlannedPath(path.join(homePath, "Documents"));
+
+  if (
+    isSamePath(resolvedRepoPath, resolvedVaultPath) ||
+    isPathInside(resolvedVaultPath, resolvedRepoPath) ||
+    isPathInside(resolvedRepoPath, resolvedVaultPath) ||
+    (homePath !== undefined && isSamePath(resolvedRepoPath, homePath)) ||
+    (documentsPath !== undefined && isSamePath(resolvedRepoPath, documentsPath))
+  ) {
+    return false;
+  }
+
+  return !isUnsafeSystemPath(resolvedRepoPath);
+}
+
+function isUnsafeSystemPath(resolvedPath: string): boolean {
+  return ["/", "/System", "/Library", "/Applications", "/bin", "/sbin", "/usr", "/etc", "/var", "/private"].some((unsafePath) => {
+    if (unsafePath === "/") {
+      return isSamePath(resolvedPath, unsafePath);
+    }
+
+    return isSamePath(resolvedPath, unsafePath) || isPathInside(unsafePath, resolvedPath);
+  });
 }
 
 async function handlePartialInitState(
@@ -490,6 +629,7 @@ async function resumeInit(
     batch,
     result: writeResult,
     configPath: state.configPath,
+    ...(state.firstProject === undefined ? {} : { firstProject: firstProjectFromState(state) }),
     projectMapPath: state.projectMapPath,
     status: "resumed",
     vaultPath: state.vaultPath
@@ -543,6 +683,7 @@ async function rollbackInit(
       warnings: []
     },
     configPath: state.configPath,
+    ...(state.firstProject === undefined ? {} : { firstProject: firstProjectFromState(state) }),
     projectMapPath: state.projectMapPath,
     status: "rolled-back",
     vaultPath: state.vaultPath,
@@ -552,6 +693,7 @@ async function rollbackInit(
 
 function createInitState(input: {
   readonly configPath: string;
+  readonly firstProject?: InitFirstProject;
   readonly locale: "en" | "zh-TW";
   readonly operationId: string;
   readonly projectMapPath: string;
@@ -570,6 +712,12 @@ function createInitState(input: {
     vaultPath: input.vaultPath,
     configPath: input.configPath,
     projectMapPath: input.projectMapPath,
+    ...(input.firstProject === undefined
+      ? {}
+      : {
+          firstProject: input.firstProject.entry,
+          firstProjectSource: input.firstProject.source
+        }),
     createdAt: now,
     updatedAt: now,
     files: input.writes.map((write) => ({
@@ -652,6 +800,14 @@ function parseInitState(value: unknown, initStatePath: string): InitStateFile {
   const configPath = normalizeStoredAbsolutePath(state.configPath, "configPath");
   const projectMapPath = normalizeStoredAbsolutePath(state.projectMapPath, "projectMapPath");
   const targetVaultPathKey = canonicalVaultPathKey(vaultPath);
+  const firstProject =
+    state.firstProject === undefined ? undefined : parseInitStateProjectEntry(state.firstProject, { vaultPath });
+  const firstProjectSource =
+    state.firstProjectSource === undefined ? undefined : parseInitStateFirstProjectSource(state.firstProjectSource);
+
+  if ((firstProject === undefined) !== (firstProjectSource === undefined)) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
 
   if (
     state.targetVaultPathKey !== targetVaultPathKey ||
@@ -673,10 +829,161 @@ function parseInitState(value: unknown, initStatePath: string): InitStateFile {
     vaultPath,
     configPath,
     projectMapPath,
+    ...(firstProject === undefined ? {} : { firstProject }),
+    ...(firstProjectSource === undefined ? {} : { firstProjectSource }),
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     files
   };
+}
+
+function parseInitStateFirstProjectSource(value: unknown): InitFirstProject["source"] {
+  if (value !== "explicit" && value !== "cwd") {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProjectSource 格式無效");
+  }
+
+  return value;
+}
+
+function firstProjectFromState(state: InitStateFile): InitFirstProject {
+  if (state.firstProject === undefined || state.firstProjectSource === undefined) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  const repoPath = state.firstProject.repoPaths[0];
+
+  if (repoPath === undefined) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  return {
+    entry: state.firstProject,
+    repoSummary: summarizeRepo(repoPath),
+    source: state.firstProjectSource
+  };
+}
+
+function parseInitStateProjectEntry(value: unknown, allowedPaths: { readonly vaultPath: string }): ProjectMapEntry {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  const project = value as Record<string, unknown>;
+
+  if (
+    typeof project.id !== "string" ||
+    typeof project.name !== "string" ||
+    typeof project.repoId !== "string" ||
+    !Array.isArray(project.repoPaths) ||
+    project.repoPaths.length === 0 ||
+    typeof project.notePath !== "string" ||
+    project.visibility !== "private"
+  ) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  const repoPaths: string[] = [];
+
+  for (const repoPath of project.repoPaths) {
+    if (typeof repoPath !== "string") {
+      throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+    }
+
+    repoPaths.push(normalizeStoredAbsolutePath(repoPath, "firstProject.repoPaths"));
+  }
+
+  if (!isVaultRelativePath(project.notePath)) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  const projectDirectory = path.resolve(allowedPaths.vaultPath, project.notePath);
+
+  if (!isPathInside(allowedPaths.vaultPath, projectDirectory)) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject notePath 格式無效");
+  }
+
+  const tags =
+    project.tags === undefined
+      ? undefined
+      : Array.isArray(project.tags) && project.tags.every((tag) => typeof tag === "string")
+        ? (project.tags as string[])
+        : undefined;
+
+  if (project.tags !== undefined && tags === undefined) {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+  }
+
+  const candidate = {
+    id: project.id,
+    name: project.name,
+    repoId: project.repoId,
+    repoPaths,
+    notePath: project.notePath,
+    ...(tags === undefined ? {} : { tags }),
+    visibility: "private"
+  };
+
+  let parsedEntry: ProjectMapEntry;
+
+  try {
+    const parsedProjectMap = parseProjectMap({
+      version: 1,
+      vaultPath: allowedPaths.vaultPath,
+      projects: [candidate]
+    });
+    const firstProject = parsedProjectMap.projects[0];
+
+    if (firstProject === undefined) {
+      throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject 格式無效");
+    }
+
+    parsedEntry = firstProject;
+  } catch {
+    throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "init-state.json firstProject schema 無效");
+  }
+
+  assertFirstProjectTrackedMarkdownSafe(allowedPaths.vaultPath, parsedEntry, ErrorCode.INIT_PARTIAL);
+
+  return parsedEntry;
+}
+
+function assertFirstProjectTrackedMarkdownSafe(vaultPath: string, entry: ProjectMapEntry, errorCode: ErrorCode): void {
+  for (const write of buildProjectContextWrites(vaultPath, entry)) {
+    const risk = firstProjectTrackedMarkdownRisk(write.content);
+
+    if (risk !== undefined) {
+      throw new AgentNotesError(errorCode, `firstProject 會寫入不安全 Markdown: ${risk}`);
+    }
+  }
+}
+
+const firstProjectTrackedMarkdownBlockingPatterns = [
+  {
+    label: "local absolute path",
+    pattern: /(^|[\s"'`=:[(])(?:(?:\/(?!\/)|\/\/)[^\s"'`<>)]+\/[^\s"'`<>)]+|[A-Za-z]:[\\/])/u
+  },
+  {
+    label: "home path alias",
+    pattern: /(^|[\s"'`=])(?:~(?:\/|(?=$|[\s"'`]))|\$HOME(?:\/|(?=$|[\s"'`]))|\$\{HOME\}(?:\/|(?=$|[\s"'`])))/u
+  },
+  {
+    label: "private path",
+    pattern: /(^|[\\/.\s"'`])(?:\.agent-notes|private)(?:[\\/]|(?=$|[\s"'`]))/iu
+  },
+  {
+    label: "local pointer field",
+    pattern: /\b(?:sourceFilePath|repoPath|vaultPath|projectMapPath|homePath)\s*[:=]/u
+  },
+  {
+    label: "raw transcript",
+    pattern: /\braw transcript\b|rawIncluded\s*:\s*true|private\/raw-sessions/u
+  }
+] as const;
+
+function firstProjectTrackedMarkdownRisk(content: string): string | undefined {
+  const normalizedContent = content.replaceAll("\\", "/");
+
+  return firstProjectTrackedMarkdownBlockingPatterns.find(({ pattern }) => pattern.test(normalizedContent))?.label;
 }
 
 function parseInitStateFileEntry(
@@ -808,6 +1115,12 @@ function initStateIdentity(state: InitStateFile): string {
     vaultPath: path.resolve(state.vaultPath),
     configPath: path.resolve(state.configPath),
     projectMapPath: path.resolve(state.projectMapPath),
+    ...(state.firstProject === undefined
+      ? {}
+      : {
+          firstProject: initStateFirstProjectIdentity(state.firstProject),
+          firstProjectSource: state.firstProjectSource
+        }),
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
     files: state.files.map((file) => ({
@@ -815,6 +1128,18 @@ function initStateIdentity(state: InitStateFile): string {
       contentHash: file.contentHash
     }))
   });
+}
+
+function initStateFirstProjectIdentity(entry: ProjectMapEntry): Record<string, unknown> {
+  return {
+    id: entry.id,
+    name: entry.name,
+    repoId: entry.repoId,
+    repoPaths: entry.repoPaths.map((repoPath) => path.resolve(repoPath)),
+    notePath: entry.notePath,
+    tags: entry.tags,
+    visibility: entry.visibility
+  };
 }
 
 function findSingleInitState(store: InitStateStore | undefined): InitStateFile | undefined {
@@ -852,6 +1177,7 @@ function normalizeStoredAbsolutePath(value: string, fieldName: string): string {
 function buildInitWritesFromState(state: InitStateFile): FileWriteInput[] {
   const writes = buildInitWrites({
     configPath: state.configPath,
+    ...(state.firstProject === undefined ? {} : { firstProject: state.firstProject }),
     locale: state.locale,
     projectMapPath: state.projectMapPath,
     vaultPath: state.vaultPath
@@ -953,6 +1279,18 @@ function readExistingLocalConfig(context: InitContext): LocalConfig | undefined 
 
 function isSamePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
+}
+
+function canonicalExistingPath(targetPath: string): string {
+  return realpathSync.native(targetPath);
+}
+
+function canonicalPlannedPath(targetPath: string): string {
+  const resolvedTargetPath = path.resolve(targetPath);
+  const existingParent = nearestExistingParent(resolvedTargetPath);
+  const canonicalParent = realpathSync.native(existingParent);
+
+  return path.join(canonicalParent, path.relative(existingParent, resolvedTargetPath));
 }
 
 function isPathInside(parentPath: string, childPath: string): boolean {
@@ -1064,6 +1402,7 @@ function nearestExistingParent(targetPath: string): string {
 
 function buildInitWrites(input: {
   readonly configPath: string;
+  readonly firstProject?: ProjectMapEntry;
   readonly locale: "en" | "zh-TW";
   readonly projectMapPath: string;
   readonly vaultPath: string;
@@ -1092,7 +1431,7 @@ function buildInitWrites(input: {
   const projectMap = {
     version: 1,
     vaultPath: input.vaultPath,
-    projects: []
+    projects: input.firstProject === undefined ? [] : [input.firstProject]
   };
   const write = (relativePath: string, content: string): FileWriteInput => ({
     targetPath: path.join(input.vaultPath, relativePath),
@@ -1116,6 +1455,7 @@ function buildInitWrites(input: {
     write("05-Resources/.gitkeep", ""),
     write("07-Archives/.gitkeep", ""),
     write("private/raw-sessions/.gitkeep", ""),
+    ...(input.firstProject === undefined ? [] : buildProjectContextWrites(input.vaultPath, input.firstProject)),
     {
       targetPath: input.configPath,
       content: `${JSON.stringify(localConfig, null, 2)}\n`,
@@ -1137,6 +1477,12 @@ function formatInitResult(result: InitResult, dryRun: boolean): string {
     `configPath: ${formatOutputPath(result.configPath, dryRun, "local config path")}`,
     `projectMapPath: ${formatOutputPath(result.projectMapPath, dryRun, "project map path")}`
   ];
+
+  if (result.firstProject !== undefined) {
+    lines.push(`firstProject: ${result.firstProject.entry.id}`);
+    lines.push(`firstProjectRepo: ${result.firstProject.repoSummary.basename}#${result.firstProject.repoSummary.shortHash}`);
+    lines.push(`firstProjectNotePath: ${result.firstProject.entry.notePath}`);
+  }
 
   if (result.status === "rolled-back") {
     const rollbackSummary = result.rollbackSummary ?? {
