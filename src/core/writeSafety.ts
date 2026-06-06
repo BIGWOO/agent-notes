@@ -187,13 +187,13 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
   } catch (error) {
     if (written.length > 0) {
       await rollbackWrites(written, options.backupRootPath).catch((rollbackError: unknown) => {
-        warnings.push(`rollback failed: ${messageFor(rollbackError)}`);
+        warnings.push(`rollback failed: ${safeErrorMessage(rollbackError)}`);
       });
     }
 
     if (lockAcquired) {
       await Promise.resolve(options.onFailure?.({ written: written.map((write) => write.targetPath) })).catch((failureCleanupError: unknown) => {
-        warnings.push(`failure cleanup failed: ${messageFor(failureCleanupError)}`);
+        warnings.push(`failure cleanup failed: ${safeErrorMessage(failureCleanupError)}`);
       });
     }
 
@@ -203,11 +203,11 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
       throw warningSuffix === "" ? error : new AgentNotesError(error.code, `${error.message}${warningSuffix}`);
     }
 
-    throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `${messageFor(error)}${warningSuffix}`);
+    throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `${safeErrorMessage(error)}${warningSuffix}`);
   } finally {
     if (lockHandle !== undefined) {
       await releaseLock(lockHandle).catch((error: unknown) => {
-        warnings.push(`lock release failed: ${messageFor(error)}`);
+        warnings.push(`lock release failed: ${safeErrorMessage(error)}`);
       });
     }
   }
@@ -336,20 +336,20 @@ async function verifyExpectedHashes(writes: readonly PreparedFileWrite[]): Promi
 
     if (write.expectedHash === null) {
       if (existsNow) {
-        throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target appeared after planning: ${write.targetPath}`);
+        throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target appeared after planning: ${safeWriteLabel(write)}`);
       }
 
       continue;
     }
 
     if (!existsNow) {
-      throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target disappeared after planning: ${write.targetPath}`);
+      throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target disappeared after planning: ${safeWriteLabel(write)}`);
     }
 
     const currentHash = hashContent(await readFile(write.targetPath, "utf8"));
 
     if (currentHash !== write.expectedHash) {
-      throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target changed after planning: ${write.targetPath}`);
+      throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `target changed after planning: ${safeWriteLabel(write)}`);
     }
   }
 }
@@ -368,7 +368,7 @@ async function backupModifiedFiles(writes: readonly PreparedFileWrite[], backupR
       });
       await writeFile(backupPath, await readFile(write.targetPath));
     } catch (error) {
-      throw new AgentNotesError(ErrorCode.BACKUP_FAILED, messageFor(error));
+      throw new AgentNotesError(ErrorCode.BACKUP_FAILED, safeErrorMessage(error));
     }
   }
 }
@@ -467,7 +467,7 @@ async function rollbackWrites(writes: readonly PreparedFileWrite[], backupRootPa
       });
       await writeFile(write.targetPath, await readFile(backupPath));
     } catch (error) {
-      failures.push(`${path.basename(write.targetPath)}: ${messageFor(error)}`);
+      failures.push(`${path.basename(write.targetPath)}: ${safeErrorMessage(error)}`);
     }
   }
 
@@ -484,12 +484,20 @@ async function removeCreatedWriteIfUnchanged(write: PreparedFileWrite): Promise<
   const currentHash = hashContent(await readFile(write.targetPath, "utf8"));
 
   if (currentHash !== hashContent(write.content)) {
-    throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `created target changed before rollback: ${write.targetPath}`);
+    throw new AgentNotesError(ErrorCode.WRITE_CONFLICT, `created target changed before rollback: ${safeWriteLabel(write)}`);
   }
 
   await rm(write.targetPath, {
     force: true
   });
+}
+
+function safeWriteLabel(write: FileWriteInput): string {
+  try {
+    return backupKeyFor(write);
+  } catch {
+    return path.basename(write.targetPath);
+  }
 }
 
 function isFileExistsError(error: unknown): boolean {
@@ -498,6 +506,16 @@ function isFileExistsError(error: unknown): boolean {
 
 function messageFor(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function safeErrorMessage(error: unknown): string {
+  return redactLocalPaths(messageFor(error));
+}
+
+function redactLocalPaths(message: string): string {
+  return message
+    .replace(/(^|[\s"'`=:(])\/(?!\/)[^\s"'`,;)]+/gu, "$1[path]")
+    .replace(/(^|[\s"'`=:(])[A-Za-z]:[\\/][^\s"'`,;)]+/gu, "$1[path]");
 }
 
 export async function pathExists(targetPath: string): Promise<boolean> {

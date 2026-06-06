@@ -235,6 +235,7 @@ describe("write safety batch", () => {
         throw new Error("expected executeWriteBatch to fail");
       } catch (error) {
         expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+        expect((error as AgentNotesError).message).not.toContain(targetPath);
       }
 
       expect(readFileSync(targetPath, "utf8")).toBe("changed");
@@ -446,6 +447,7 @@ describe("write safety batch", () => {
 
   it("atomic rename 失敗時移除 temp file", async () => {
     const workspace = makeWorkspace();
+    const targetPath = path.join(workspace, "vault", "note.md");
 
     vi.resetModules();
 
@@ -455,12 +457,11 @@ describe("write safety batch", () => {
       vi.doMock("node:fs/promises", () => ({
         ...fsPromises,
         rename: vi.fn(async () => {
-          throw new Error("rename failed");
+          throw new Error(`rename failed: ${targetPath}; fallback /opt/agent-notes/vault/note.md`);
         })
       }));
 
       const writeSafety = await import("../src/core/writeSafety.js");
-      const targetPath = path.join(workspace, "vault", "note.md");
       const batch = writeSafety.prepareWriteBatch({
         command: "capture",
         operationId: "op-rename-fails",
@@ -481,6 +482,9 @@ describe("write safety batch", () => {
         throw new Error("expected executeWriteBatch to fail");
       } catch (error) {
         expect((error as AgentNotesError).code).toBe(ErrorCode.WRITE_CONFLICT);
+        expect((error as AgentNotesError).message).not.toContain(targetPath);
+        expect((error as AgentNotesError).message).not.toContain("/opt/agent-notes");
+        expect((error as AgentNotesError).message).not.toContain(workspace);
       }
 
       expect(existsSync(targetPath)).toBe(false);
@@ -542,6 +546,9 @@ describe("write safety batch", () => {
         throw new Error("expected executeWriteBatch to fail");
       } catch (error) {
         expect((error as AgentNotesError).code).toBe(ErrorCode.WRITE_CONFLICT);
+        expect((error as AgentNotesError).message).not.toContain(firstPath);
+        expect((error as AgentNotesError).message).not.toContain(blockedParent);
+        expect((error as AgentNotesError).message).not.toContain(workspace);
       }
 
       expect(readFileSync(firstPath, "utf8")).toBe("user edit");
