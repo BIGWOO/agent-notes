@@ -43,6 +43,9 @@ export interface ExecuteWriteBatchOptions {
   readonly lockFilePath: string;
   readonly backupRootPath: string;
   readonly dryRun?: boolean;
+  readonly beforeApply?: () => Promise<void> | void;
+  readonly afterApply?: () => Promise<void> | void;
+  readonly onFailure?: (context: { readonly written: readonly string[] }) => Promise<void> | void;
 }
 
 export interface WriteBatchResult {
@@ -55,6 +58,13 @@ export interface WriteBatchResult {
 interface LockHandle {
   readonly operationId: string;
   readonly lockFilePath: string;
+}
+
+export interface WriteLockOptions<T> {
+  readonly lockFilePath: string;
+  readonly operationId: string;
+  readonly command: string;
+  readonly action: () => Promise<T> | T;
 }
 
 export function createOperationId(command: string): string {
@@ -150,11 +160,14 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
   }
 
   let lockHandle: LockHandle | undefined;
+  let lockAcquired = false;
   const written: PreparedFileWrite[] = [];
   const warnings: string[] = [];
 
   try {
     lockHandle = await acquireLock(options.lockFilePath, batch.plan.operationId, batch.plan.command);
+    lockAcquired = true;
+    await options.beforeApply?.();
     await verifyExpectedHashes(batch.writes);
     await backupModifiedFiles(batch.writes, options.backupRootPath);
 
@@ -162,6 +175,8 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
       await atomicWrite(write.targetPath, write.content, batch.plan.operationId);
       written.push(write);
     }
+
+    await options.afterApply?.();
 
     return {
       operationId: batch.plan.operationId,
@@ -173,6 +188,12 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
     if (written.length > 0) {
       await rollbackWrites(written, options.backupRootPath).catch((rollbackError: unknown) => {
         warnings.push(`rollback failed: ${messageFor(rollbackError)}`);
+      });
+    }
+
+    if (lockAcquired) {
+      await Promise.resolve(options.onFailure?.({ written: written.map((write) => write.targetPath) })).catch((failureCleanupError: unknown) => {
+        warnings.push(`failure cleanup failed: ${messageFor(failureCleanupError)}`);
       });
     }
 
@@ -194,6 +215,20 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
 
 export function hashContent(content: string): string {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+export async function withWriteLock<T>(options: WriteLockOptions<T>): Promise<T> {
+  let lockHandle: LockHandle | undefined;
+
+  try {
+    lockHandle = await acquireLock(options.lockFilePath, options.operationId, options.command);
+
+    return await options.action();
+  } finally {
+    if (lockHandle !== undefined) {
+      await releaseLock(lockHandle);
+    }
+  }
 }
 
 function prepareFileWrite(write: FileWriteInput): PreparedFileWrite {

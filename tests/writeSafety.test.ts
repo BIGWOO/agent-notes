@@ -131,6 +131,51 @@ describe("write safety batch", () => {
     }
   });
 
+  it("lock 已存在時不呼叫 failure cleanup", async () => {
+    const workspace = makeWorkspace();
+    const targetPath = path.join(workspace, "vault", "note.md");
+    const lockFilePath = path.join(workspace, ".agent-notes", "locks", "capture.lock");
+    const statePath = path.join(workspace, ".agent-notes", "init-state.json");
+    let cleanupCalled = false;
+
+    try {
+      writeFixtureFile(lockFilePath, "existing", "wx");
+      writeFixtureFile(statePath, "state");
+      const batch = prepareWriteBatch({
+        command: "capture",
+        operationId: "op-lock-cleanup",
+        writes: [
+          {
+            targetPath,
+            content: "created"
+          }
+        ]
+      });
+
+      try {
+        await executeWriteBatch({
+          batch,
+          lockFilePath,
+          backupRootPath: path.join(workspace, ".agent-notes", "backups", "op-lock-cleanup"),
+          onFailure: () => {
+            cleanupCalled = true;
+            rmSync(statePath, {
+              force: true
+            });
+          }
+        });
+        throw new Error("expected executeWriteBatch to fail");
+      } catch (error) {
+        expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      }
+
+      expect(cleanupCalled).toBe(false);
+      expect(readFileSync(statePath, "utf8")).toBe("state");
+    } finally {
+      cleanup(workspace);
+    }
+  });
+
   it("修改既有檔案時建立 backup", async () => {
     const workspace = makeWorkspace();
     const targetPath = path.join(workspace, "vault", "note.md");
