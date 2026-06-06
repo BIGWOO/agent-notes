@@ -1,0 +1,33 @@
+{
+  "type": "agent-session",
+  "schemaVersion": 1,
+  "title": "Example session",
+  "date": "2026-06-06",
+  "capturedAt": "2026-06-06T12:00:00+08:00",
+  "agent": "codex",
+  "tool": "Codex",
+  "projectId": "example",
+  "project": "Example",
+  "repoId": "example",
+  "scope": "project",
+  "status": "done",
+  "visibility": "private",
+  "repoPath": "/tmp/example",
+  "source": {
+    "kind": "summary-file",
+    "ref": "local-summary-2026-06-06",
+    "rawIncluded": false
+  },
+  "sourceRefs": [
+    "src_20260606_codex_001"
+  ],
+  "derivedItems": {
+    "decisions": [],
+    "tasks": [],
+    "contextUpdates": []
+  },
+  "tags": [
+    "session",
+    "codex"
+  ]
+}

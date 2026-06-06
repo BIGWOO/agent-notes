@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "vaultPath": "/tmp/agent-notes/vault",
+  "projects": [
+    {
+      "id": "example",
+      "name": "Example",
+      "repoId": "example",
+      "repoPaths": [
+        "/tmp/example"
+      ],
+      "notePath": "/tmp/agent-notes/vault/03-Projects/Example",
+      "tags": [
+        "example"
+      ],
+      "visibility": "private"
+    }
+  ]
+}

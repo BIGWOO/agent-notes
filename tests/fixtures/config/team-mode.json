@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "locale": "en",
+  "vaultPath": "/tmp/agent-notes/vault",
+  "projectMapPath": "/tmp/agent-notes/project-map.json",
+  "privacy": {
+    "defaultVisibility": "private",
+    "recordAbsolutePathsInNotes": false,
+    "copyRawTranscripts": false
+  },
+  "sharing": {
+    "mode": "team",
+    "access": "read-write",
+    "agentWritePolicy": "local-only"
+  },
+  "integrations": {
+    "codex": {
+      "enabled": false
+    }
+  }
+}

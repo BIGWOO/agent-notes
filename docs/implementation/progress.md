@@ -11,7 +11,7 @@ Source: [`phase-1-plan.md`](phase-1-plan.md) 與 `docs/specs/`
 | ID | Workstream | Status | Source Spec | Acceptance Criteria | Notes |
 | --- | --- | --- | --- | --- | --- |
 | P1-001 | Scaffold | done | [`../specs/cli.md`](../specs/cli.md) | Node.js + TypeScript CLI 可顯示 help/version，build/test/lint 可執行 | 已建立 npm/TypeScript CLI scaffold、Commander command skeleton、Vitest fixture test structure；驗證：`npm test`、`npm run build`、`npm run typecheck`、`npm run lint`、`npm exec -- agent-notes --help`、`npm exec -- agent-notes --version` |
-| P1-002 | Schemas and Config | planned | [`../specs/schemas.md`](../specs/schemas.md) | local config、project map、session frontmatter schema 有驗證與 fixture tests | 尚未開始實作 |
+| P1-002 | Schemas and Config | done | [`../specs/schemas.md`](../specs/schemas.md) | local config、project map、session frontmatter schema 有驗證與 fixture tests | 已實作 error code enum、Zod schemas、config loader、path expansion/canonical path helper 與 fixture tests；驗證：`npm test`、`npm run build`、`npm run typecheck`、`npm run lint` |
 | P1-003 | Vault Init | planned | [`../specs/init-onboarding.md`](../specs/init-onboarding.md) | fresh/already/partial/unsafe/non-interactive init cases 有測試 | 近期優先 |
 | P1-004 | Project Map | planned | [`../specs/cli.md`](../specs/cli.md)、[`../specs/schemas.md`](../specs/schemas.md) | `project add/list/check` 可讀寫或檢查 project map，且 read-only commands 不輸出絕對 repo path | 尚未開始實作 |
 | P1-005 | Capture | planned | [`../specs/cli.md`](../specs/cli.md)、[`../architecture/capture-pipeline.md`](../architecture/capture-pipeline.md) | 可解析 summary file、建立 session card、dry-run 不寫檔 | 尚未開始實作 |
