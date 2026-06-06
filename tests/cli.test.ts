@@ -70,7 +70,7 @@ describe("agent-notes CLI scaffold", () => {
   });
 
   it("未實作 command 使用穩定錯誤碼", async () => {
-    const result = await parseCli(["init", "--dry-run"]);
+    const result = await parseCli(["capture", "--dry-run"]);
 
     expect(result.exitCode).toBe(exitCodeFor(ErrorCode.FEATURE_UNSUPPORTED));
     expect(result.stderr).toContain(ErrorCode.FEATURE_UNSUPPORTED);

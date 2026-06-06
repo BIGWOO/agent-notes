@@ -9,14 +9,21 @@ export interface LoadConfigOptions extends PathOptions {
   readonly configPath?: string;
 }
 
-export function defaultConfigPath(options: PathOptions = {}): string {
-  const homeDir = options.homeDir ?? options.env?.HOME ?? homedir();
+export function defaultConfigDir(options: PathOptions = {}): string {
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? env.HOME ?? homedir();
+  const xdgConfigHome = env.XDG_CONFIG_HOME;
+
   const configHome =
-    options.env?.XDG_CONFIG_HOME !== undefined && options.env.XDG_CONFIG_HOME.trim() !== ""
-      ? resolvePath(options.env.XDG_CONFIG_HOME, options)
+    xdgConfigHome !== undefined && xdgConfigHome.trim() !== ""
+      ? resolvePath(xdgConfigHome, options)
       : path.join(homeDir, ".config");
 
-  return path.join(configHome, "agent-notes", "config.json");
+  return path.join(configHome, "agent-notes");
+}
+
+export function defaultConfigPath(options: PathOptions = {}): string {
+  return path.join(defaultConfigDir(options), "config.json");
 }
 
 export function loadConfig(options: LoadConfigOptions = {}): LocalConfig {

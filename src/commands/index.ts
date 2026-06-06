@@ -1,22 +1,9 @@
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
+import { registerInitCommand } from "./init.js";
 
 export function registerCommands(program: Command): void {
-  program
-    .command("init")
-    .description("建立新的 Agent Notes vault 與本機設定")
-    .option("--yes", "使用非互動模式確認必要步驟")
-    .option("--lang <locale>", "指定介面語言，例如 en 或 zh-TW")
-    .option("--vault-path <path>", "指定 vault 建立位置")
-    .option("--no-integrations", "略過 agent integration 設定")
-    .option("--no-project", "略過第一個 project 設定")
-    .option("--project-repo <path>", "指定第一個 project repo")
-    .option("--allow-git-worktree-vault", "允許在 Git worktree 內建立 vault")
-    .option("--resume", "恢復未完成的 init")
-    .option("--rollback", "回復未完成的 init")
-    .option("--dry-run", "只顯示 write plan，不寫入檔案")
-    .action(notImplemented("init"));
-
+  registerInitCommand(program);
   registerProjectCommands(program);
   registerCaptureCommand(program);
   registerContextCommand(program);
