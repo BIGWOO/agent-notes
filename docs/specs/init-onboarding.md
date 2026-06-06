@@ -141,3 +141,53 @@ agent-notes init --yes --lang zh-TW --vault-path "$HOME/Documents/Agent-Notes" -
 14. 自動執行或建議執行 `agent-notes doctor`
 
 Hook integration engine 必須獨立於 `init`，讓使用者日後可用 `agent-notes integrate ...` 補設定；`init` 只是首次 onboarding 的互動式呼叫入口。
+
+## Phase 1 Prompt Sequence
+
+互動式 `init` 在最終確認前不得寫任何檔案。使用者取消任一 prompt 時回傳 `INIT_CANCELLED`。
+
+| Step | Prompt / Action | Default | Skip Flag | Writes |
+| --- | --- | --- | --- | --- |
+| 1 | preflight：runtime、config dir、cwd safety | none | none | none |
+| 2 | 選擇語言 | `en`；zh_TW locale 預選 `zh-TW` | `--lang` | none |
+| 3 | 選擇新 vault path | platform default | `--vault-path` | none |
+| 4 | 顯示 write plan 並確認 | no | `--yes` | none |
+| 5 | 是否加入第一個 project | safe git cwd only | `--no-project` / `--project-repo` | after confirm |
+| 6 | 是否設定 integrations，多選 | none selected | `--no-integrations` | after per-agent confirm |
+| 7 | 建議執行 doctor | yes | none | none |
+
+## Phase 1 Write Plan
+
+`init` 確認後採固定順序寫入，讓失敗時可 resume / rollback：
+
+1. 在 local config dir 建立或更新 `init-state.json`。
+2. 建立 vault root。
+3. 建立 vault `.gitignore`，先確保 `.agent-notes/` 與 `private/` 被忽略。
+4. 建立標準目錄。
+5. 建立 templates 與 `00-Meta/Systems/agent-note-protocol.md`。
+6. 建立 local config。
+7. 建立 empty project map。
+8. 若有第一個 project，委派 `project add` 的同一套邏輯。
+9. 若有 integrations，逐一委派 `integrate <agent> --dry-run` 與 apply confirmation。
+10. 標記 init state complete。
+
+規則：
+
+- `--dry-run` 只輸出 write plan，不建立 `init-state.json`。
+- `.agent-notes/` 只能在 `.gitignore` 建立且驗證後寫入。
+- rollback 只刪除本次 write plan 建立且未被使用者修改的檔案。
+- integration failure 不應 rollback 已完成的 vault init，只輸出 per-agent failure summary。
+
+## Acceptance Cases
+
+| Case | Command / Condition | Exit Code | Assertion |
+| --- | --- | --- | --- |
+| dry-run | `agent-notes init --dry-run --vault-path <tmp>` | `OK` | 不寫任何檔案 |
+| non-interactive missing path | no Documents + `--yes --lang en` | `NON_INTERACTIVE_REQUIRED` | 不寫 cwd |
+| user cancel | cancel first prompt | `INIT_CANCELLED` | 不寫檔 |
+| fresh init | empty target + confirmed | `OK` | 建立 config、project map、vault skeleton |
+| already initialized | valid config + valid vault | `OK` | 不重建，提示 `doctor` |
+| existing valid vault not configured | target valid but config not pointing to it | `VAULT_ALREADY_INITIALIZED` | 不採用、不綁定 |
+| existing non-agent dir | target non-empty non-agent | `VAULT_EXISTS_NON_EMPTY` | 不覆蓋 |
+| unsafe git worktree | non-interactive target inside repo | `PATH_UNSAFE` | 不寫檔 |
+| partial resume | valid init-state exists | `OK` or specific failing code | 只繼續 pending steps |
