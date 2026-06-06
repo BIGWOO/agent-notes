@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runInit, runInitCommand } from "../src/commands/init.js";
+import { buildProjectContextWrites } from "../src/commands/project.js";
 import { AgentNotesError, ErrorCode } from "../src/core/errors.js";
+import type { ProjectMapEntry } from "../src/schemas/projectMap.js";
 
 function makeWorkspace(): {
   readonly root: string;
@@ -14,6 +16,24 @@ function makeWorkspace(): {
   readonly vaultPath: string;
 } {
   const root = mkdtempSync(path.join(tmpdir(), "agent-notes-init-"));
+
+  return {
+    root,
+    configHome: path.join(root, "xdg-config"),
+    home: path.join(root, "home"),
+    vaultPath: path.join(root, "Agent-Notes")
+  };
+}
+
+function makeUserHomeWorkspace(): ReturnType<typeof makeWorkspace> {
+  const homeRoot = process.env.HOME ?? tmpdir();
+  const parent = path.join(homeRoot, ".cache", "agent-notes-tests");
+
+  mkdirSync(parent, {
+    recursive: true
+  });
+
+  const root = mkdtempSync(path.join(parent, "init-"));
 
   return {
     root,
@@ -35,6 +55,16 @@ function writeFixtureFile(targetPath: string, content: string): void {
     recursive: true
   });
   writeFileSync(targetPath, content);
+}
+
+function createGitRepo(repoPath: string): void {
+  mkdirSync(repoPath, {
+    recursive: true
+  });
+  execFileSync("git", ["init"], {
+    cwd: repoPath,
+    stdio: "ignore"
+  });
 }
 
 function createValidVault(vaultPath: string): void {
@@ -88,7 +118,10 @@ function writeLocalConfig(workspace: ReturnType<typeof makeWorkspace>, vaultPath
   );
 }
 
-function plannedInitWrites(workspace: ReturnType<typeof makeWorkspace>): { readonly targetPath: string; readonly content: string }[] {
+function plannedInitWrites(
+  workspace: ReturnType<typeof makeWorkspace>,
+  firstProject?: ProjectMapEntry
+): { readonly targetPath: string; readonly content: string }[] {
   const configPath = path.join(workspace.configHome, "agent-notes", "config.json");
   const projectMapPath = path.join(workspace.configHome, "agent-notes", "project-map.json");
   const localConfig = {
@@ -115,7 +148,7 @@ function plannedInitWrites(workspace: ReturnType<typeof makeWorkspace>): { reado
   const projectMap = {
     version: 1,
     vaultPath: workspace.vaultPath,
-    projects: []
+    projects: firstProject === undefined ? [] : [firstProject]
   };
   const write = (relativePath: string, content: string): { readonly targetPath: string; readonly content: string } => ({
     targetPath: path.join(workspace.vaultPath, relativePath),
@@ -210,6 +243,7 @@ tags:
     write("05-Resources/.gitkeep", ""),
     write("07-Archives/.gitkeep", ""),
     write("private/raw-sessions/.gitkeep", ""),
+    ...(firstProject === undefined ? [] : buildProjectContextWrites(workspace.vaultPath, firstProject)),
     {
       targetPath: configPath,
       content: `${JSON.stringify(localConfig, null, 2)}\n`
@@ -261,6 +295,22 @@ function initStateForWorkspace(workspace: ReturnType<typeof makeWorkspace>): Rec
       targetPath: write.targetPath,
       contentHash: hashContent(write.content)
     }))
+  };
+}
+
+function initStateFirstProject(
+  workspace: ReturnType<typeof makeWorkspace>,
+  overrides: Partial<ProjectMapEntry> = {}
+): ProjectMapEntry {
+  return {
+    id: "example-repo",
+    name: "Example Repo",
+    repoId: "example-repo",
+    repoPaths: [path.join(workspace.root, "example-repo")],
+    notePath: "03-Projects/Example Repo",
+    tags: ["example-repo"],
+    visibility: "private",
+    ...overrides
   };
 }
 
@@ -412,6 +462,185 @@ describe("init command", () => {
     }
   });
 
+  it("非互動 apply 可用 --project-repo 建立第一個 project", async () => {
+    const workspace = makeWorkspace();
+    const repoPath = path.join(workspace.root, "example-repo");
+
+    try {
+      createGitRepo(repoPath);
+
+      const result = await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          projectRepo: repoPath
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      const projectMapPath = path.join(workspace.configHome, "agent-notes", "project-map.json");
+      const projectMap = JSON.parse(readFileSync(projectMapPath, "utf8"));
+      const readmePath = path.join(workspace.vaultPath, "03-Projects", "Example Repo", "README.md");
+
+      expect(result.firstProject?.entry.id).toBe("example-repo");
+      expect(result.firstProject?.source).toBe("explicit");
+      expect(result.result.written).toHaveLength(21);
+      expect(projectMap.projects).toHaveLength(1);
+      expect(projectMap.projects[0]).toMatchObject({
+        id: "example-repo",
+        name: "Example Repo",
+        repoId: "example-repo",
+        notePath: "03-Projects/Example Repo",
+        visibility: "private"
+      });
+      expect(projectMap.projects[0].repoPaths).toEqual([realpathSync.native(repoPath)]);
+      expect(readFileSync(readmePath, "utf8")).toContain("# Example Repo");
+      expect(readFileSync(readmePath, "utf8")).not.toContain(repoPath);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it.each([
+    {
+      label: "standalone home alias",
+      repoName: "~"
+    },
+    {
+      label: "Windows drive path",
+      repoName: "C:\\Users"
+    },
+    {
+      label: "UNC path",
+      repoName: "\\\\server\\share"
+    },
+    {
+      label: "normalized private path",
+      repoName: "\\private"
+    }
+  ])("fresh --project-repo 拒絕會寫入 tracked Markdown 的本機指標名稱: $label", async ({ repoName }) => {
+    const workspace = makeWorkspace();
+    const repoPath = path.join(workspace.root, repoName);
+
+    try {
+      createGitRepo(repoPath);
+
+      await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          projectRepo: repoPath
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PRIVATE_DATA_RISK);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式確認 safe git cwd 後若名稱會污染 Markdown 則拒絕第一個 project", async () => {
+    const workspace = makeUserHomeWorkspace();
+    const repoPath = path.join(workspace.home, "repos", "~");
+    const prompts: string[] = [];
+
+    try {
+      createGitRepo(repoPath);
+
+      await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false
+        },
+        {
+          cwd: repoPath,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          }
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PRIVATE_DATA_RISK);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("current git repo");
+      expect(prompts[0]).not.toContain(repoPath);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("dry-run 可規劃 --project-repo 且不輸出 repo 絕對路徑", async () => {
+    const workspace = makeWorkspace();
+    const repoPath = path.join(workspace.root, "example-repo");
+    const stdout: string[] = [];
+
+    try {
+      createGitRepo(repoPath);
+
+      const result = await runInitCommand(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          projectRepo: repoPath
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          stdout: (value) => stdout.push(value)
+        }
+      );
+      const output = stdout.join("");
+
+      expect(result.firstProject?.entry.id).toBe("example-repo");
+      expect(result.batch.plan.filesToCreate).toHaveLength(21);
+      expect(output).toContain("firstProject: example-repo");
+      expect(output).toContain("firstProjectRepo: example-repo#");
+      expect(output).not.toContain(repoPath);
+      expect(output).not.toContain(workspace.root);
+      expect(existsSync(workspace.vaultPath)).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "project-map.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
   it("已初始化且 config 指向 valid vault 時可重跑且不寫入", async () => {
     const workspace = makeWorkspace();
 
@@ -494,6 +723,37 @@ describe("init command", () => {
       throw new Error("expected runInit to fail");
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.NON_INTERACTIVE_REQUIRED);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("--no-project 與 --project-repo 同時使用時回 CONFIG_INVALID", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false,
+          projectRepo: path.join(workspace.root, "repo")
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+      expect(existsSync(path.join(workspace.vaultPath, ".gitignore"))).toBe(false);
     } finally {
       cleanup(workspace.root);
     }
@@ -600,6 +860,182 @@ describe("init command", () => {
       expect(existsSync(path.join(workspace.configHome, "agent-notes", "init.lock"))).toBe(false);
     } finally {
       cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式可詢問並加入 safe git cwd 作為第一個 project", async () => {
+    const workspace = makeUserHomeWorkspace();
+    const repoPath = path.join(workspace.home, "repos", "current-repo");
+    const prompts: string[] = [];
+
+    try {
+      createGitRepo(repoPath);
+
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false
+        },
+        {
+          cwd: repoPath,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          }
+        }
+      );
+      const projectMap = JSON.parse(readFileSync(path.join(workspace.configHome, "agent-notes", "project-map.json"), "utf8"));
+
+      expect(prompts).toHaveLength(2);
+      expect(prompts[0]).toContain("current git repo");
+      expect(prompts[0]).toContain("current-repo#");
+      expect(prompts[0]).not.toContain(repoPath);
+      expect(prompts[1]).toContain("first project: current-repo");
+      expect(result.firstProject?.entry.id).toBe("current-repo");
+      expect(result.firstProject?.source).toBe("cwd");
+      expect(projectMap.projects).toHaveLength(1);
+      expect(existsSync(path.join(workspace.vaultPath, "03-Projects", "Current Repo", "README.md"))).toBe(true);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式在非 git cwd 不詢問第一個 project", async () => {
+    const workspace = makeWorkspace();
+    const prompts: string[] = [];
+
+    try {
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          }
+        }
+      );
+      const projectMap = JSON.parse(readFileSync(path.join(workspace.configHome, "agent-notes", "project-map.json"), "utf8"));
+
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("Agent Notes init will create");
+      expect(result.firstProject).toBeUndefined();
+      expect(projectMap.projects).toHaveLength(0);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動模式在系統目錄 descendant git cwd 不詢問第一個 project", async () => {
+    const workspace = makeWorkspace();
+    const unsafeRoot = "/private/tmp";
+    const prompts: string[] = [];
+
+    if (!existsSync(unsafeRoot)) {
+      cleanup(workspace.root);
+      return;
+    }
+
+    const repoPath = mkdtempSync(path.join(unsafeRoot, "agent-notes-unsafe-repo-"));
+
+    try {
+      createGitRepo(repoPath);
+
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false
+        },
+        {
+          cwd: repoPath,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          }
+        }
+      );
+      const projectMap = JSON.parse(readFileSync(path.join(workspace.configHome, "agent-notes", "project-map.json"), "utf8"));
+
+      expect(prompts).toHaveLength(1);
+      expect(result.firstProject).toBeUndefined();
+      expect(projectMap.projects).toHaveLength(0);
+    } finally {
+      cleanup(workspace.root);
+      cleanup(repoPath);
+    }
+  });
+
+  it("互動模式在 HOME symlink 指向系統目錄 descendant 時不加入第一個 project", async () => {
+    const workspace = makeWorkspace();
+    const unsafeRoot = "/private/tmp";
+    const prompts: string[] = [];
+
+    if (!existsSync(unsafeRoot)) {
+      cleanup(workspace.root);
+      return;
+    }
+
+    const unsafeHome = mkdtempSync(path.join(unsafeRoot, "agent-notes-unsafe-home-"));
+    const linkedHome = path.join(workspace.root, "linked-home");
+    const repoPath = path.join(linkedHome, "repos", "current-repo");
+
+    try {
+      symlinkSync(unsafeHome, linkedHome, "dir");
+      createGitRepo(repoPath);
+
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false
+        },
+        {
+          cwd: repoPath,
+          env: {
+            HOME: linkedHome,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: linkedHome,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return true;
+          }
+        }
+      );
+      const projectMap = JSON.parse(readFileSync(path.join(workspace.configHome, "agent-notes", "project-map.json"), "utf8"));
+
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("Agent Notes init will create");
+      expect(result.firstProject).toBeUndefined();
+      expect(projectMap.projects).toHaveLength(0);
+    } finally {
+      cleanup(workspace.root);
+      cleanup(unsafeHome);
     }
   });
 
@@ -939,6 +1375,109 @@ describe("init command", () => {
     }
   });
 
+  it("resume 拒絕 schema 無效的 init-state firstProject", async () => {
+    const workspace = makeWorkspace();
+    const state = initStateForWorkspace(workspace);
+
+    try {
+      writeInitState(workspace, {
+        ...state,
+        firstProject: {
+          id: "bad id",
+          name: "Bad Project",
+          repoId: "bad-project",
+          repoPaths: [workspace.root],
+          notePath: "03-Projects/Bad Project",
+          tags: ["bad id"],
+          visibility: "private"
+        },
+        firstProjectSource: "explicit"
+      });
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+      expect(existsSync(path.join(workspace.vaultPath, "03-Projects", "Bad Project", "README.md"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it.each([
+    {
+      label: "POSIX absolute path",
+      projectName: "/usr/local/repo"
+    },
+    {
+      label: "macOS user absolute path",
+      projectName: "/Users/example/repo"
+    },
+    {
+      label: "POSIX UNC path",
+      projectName: "//server/share"
+    },
+    {
+      label: "agent notes private directory",
+      projectName: ".agent-notes"
+    },
+    {
+      label: "braced home alias",
+      projectName: "${HOME}"
+    }
+  ])("resume 拒絕 firstProject name 寫入本機指標到 Markdown: $label", async ({ projectName }) => {
+    const workspace = makeWorkspace();
+    const state = initStateForWorkspace(workspace);
+
+    try {
+      writeInitState(workspace, {
+        ...state,
+        firstProject: {
+          id: "unsafe-project",
+          name: projectName,
+          repoId: "unsafe-project",
+          repoPaths: [workspace.root],
+          notePath: "03-Projects/Unsafe Project",
+          tags: ["unsafe-project"],
+          visibility: "private"
+        },
+        firstProjectSource: "explicit"
+      });
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+      expect(existsSync(path.join(workspace.vaultPath, "03-Projects", "Unsafe Project", "README.md"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
   it("resume 拒絕超出 allowlist 的 absolute init-state target path", async () => {
     const workspace = makeWorkspace();
 
@@ -1186,6 +1725,92 @@ describe("init command", () => {
       ...staleState,
       createdAt: "2026-06-07T00:00:01.000Z",
       updatedAt: "2026-06-07T00:00:01.000Z"
+    };
+    const staleStateRaw = initStateStoreJson(staleState);
+    const newerStateRaw = initStateStoreJson(newerState);
+
+    vi.resetModules();
+
+    try {
+      writeFixtureFile(statePath, staleStateRaw);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      const fsActual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      let stateReadCount = 0;
+
+      vi.doMock("node:fs", () => ({
+        ...fsActual,
+        readFileSync: (...args: Parameters<typeof fsActual.readFileSync>) => {
+          const [targetPath] = args;
+
+          if (String(targetPath) === statePath) {
+            stateReadCount += 1;
+
+            if (stateReadCount === 1) {
+              fsActual.writeFileSync(statePath, newerStateRaw);
+
+              return staleStateRaw;
+            }
+          }
+
+          return fsActual.readFileSync(...args);
+        }
+      }));
+
+      const { runInit: mockedRunInit } = await import("../src/commands/init.js");
+
+      await mockedRunInit(
+        {
+          rollback: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expect((error as { readonly code?: ErrorCode }).code).toBe(ErrorCode.WRITE_CONFLICT);
+      expect(readFileSync(writes[0].targetPath, "utf8")).toBe(writes[0].content);
+      expect(readFileSync(statePath, "utf8")).toBe(newerStateRaw);
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback 拿到 lock 後若 firstProject state 已改變則拒絕使用 stale state 刪檔", async () => {
+    const workspace = makeWorkspace();
+    const statePath = path.join(workspace.configHome, "agent-notes", "init-state.json");
+    const staleFirstProject = initStateFirstProject(workspace);
+    const newerFirstProject = initStateFirstProject(workspace, {
+      id: "renamed-repo",
+      name: "Renamed Repo",
+      repoId: "renamed-repo",
+      notePath: "03-Projects/Renamed Repo",
+      tags: ["renamed-repo"]
+    });
+    const writes = plannedInitWrites(workspace, staleFirstProject);
+    const staleState = {
+      ...initStateForWorkspace(workspace),
+      files: writes.map((write) => ({
+        targetPath: write.targetPath,
+        contentHash: hashContent(write.content)
+      })),
+      firstProject: staleFirstProject,
+      firstProjectSource: "explicit"
+    };
+    const newerState = {
+      ...staleState,
+      files: plannedInitWrites(workspace, newerFirstProject).map((write) => ({
+        targetPath: write.targetPath,
+        contentHash: hashContent(write.content)
+      })),
+      firstProject: newerFirstProject
     };
     const staleStateRaw = initStateStoreJson(staleState);
     const newerStateRaw = initStateStoreJson(newerState);
