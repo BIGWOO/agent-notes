@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runInit, runInitCommand } from "../src/commands/init.js";
 import { AgentNotesError, ErrorCode } from "../src/core/errors.js";
 
@@ -85,6 +86,208 @@ function writeLocalConfig(workspace: ReturnType<typeof makeWorkspace>, vaultPath
       2
     )}\n`
   );
+}
+
+function plannedInitWrites(workspace: ReturnType<typeof makeWorkspace>): { readonly targetPath: string; readonly content: string }[] {
+  const configPath = path.join(workspace.configHome, "agent-notes", "config.json");
+  const projectMapPath = path.join(workspace.configHome, "agent-notes", "project-map.json");
+  const localConfig = {
+    version: 1,
+    locale: "zh-TW",
+    vaultPath: workspace.vaultPath,
+    projectMapPath,
+    privacy: {
+      defaultVisibility: "private",
+      recordAbsolutePathsInNotes: false,
+      copyRawTranscripts: false
+    },
+    sharing: {
+      mode: "personal",
+      access: "read-write",
+      agentWritePolicy: "local-only"
+    },
+    integrations: {
+      codex: {
+        enabled: false
+      }
+    }
+  };
+  const projectMap = {
+    version: 1,
+    vaultPath: workspace.vaultPath,
+    projects: []
+  };
+  const write = (relativePath: string, content: string): { readonly targetPath: string; readonly content: string } => ({
+    targetPath: path.join(workspace.vaultPath, relativePath),
+    content
+  });
+
+  return [
+    write(".gitignore", "private/\n.agent-notes/\n.DS_Store\n"),
+    write(
+      "00-Meta/Systems/agent-note-protocol.md",
+      "# Agent Notes Protocol\n\nThis vault was created by Agent Notes.\n\nGenerated blocks are managed by the `agent-notes` CLI. Manual notes should live outside generated marker blocks.\n"
+    ),
+    write("06-Templates/summary-file.md", "## Summary\n\n## Changes\n\n## Decisions\n\n## Validation\n\n## Next Steps\n\n## Handoff\n"),
+    write(
+      "06-Templates/session-card.md",
+      `---
+type: agent-session
+schemaVersion: 1
+title: "{{title}}"
+date: "{{date}}"
+capturedAt: "{{capturedAt}}"
+agent: "{{agent}}"
+tool: "{{tool}}"
+scope: "{{scope}}"
+status: "{{status}}"
+visibility: private
+source:
+  kind: "{{sourceKind}}"
+  ref: "{{sourceRef}}"
+  rawIncluded: false
+sourceRefs:
+  - "{{sourceRef}}"
+derivedItems:
+  decisions: []
+  tasks: []
+  contextUpdates: []
+tags:
+  - session
+---
+
+# {{title}}
+
+## Summary
+
+{{summary}}
+
+## Changes
+
+{{changes}}
+
+## Decisions
+
+{{decisions}}
+
+## Validation
+
+{{validation}}
+
+## Next Steps
+
+{{nextSteps}}
+
+## Handoff
+
+{{handoff}}
+
+## Source
+
+{{sourceSummary}}
+`
+    ),
+    write(
+      "06-Templates/project-README.md",
+      "# {{projectName}}\n\nManual notes live outside generated blocks.\n\n<!-- agent-notes:start project-summary -->\n<!-- agent-notes:end project-summary -->\n"
+    ),
+    write(
+      "06-Templates/active-tasks.md",
+      "# Active Tasks\n\nManual notes live outside generated blocks.\n\n<!-- agent-notes:start active-tasks -->\n<!-- agent-notes:end active-tasks -->\n"
+    ),
+    write(
+      "06-Templates/decision-log.md",
+      "# Decision Log\n\nManual notes live outside generated blocks.\n\n<!-- agent-notes:start decision-log -->\n<!-- agent-notes:end decision-log -->\n"
+    ),
+    write(
+      "06-Templates/pitfalls.md",
+      "# Pitfalls\n\nManual notes live outside generated blocks.\n\n<!-- agent-notes:start pitfalls -->\n<!-- agent-notes:end pitfalls -->\n"
+    ),
+    write("01-Inbox/shared-capture/.gitkeep", ""),
+    write("02-Daily/.gitkeep", ""),
+    write("03-Projects/.gitkeep", ""),
+    write("04-Areas/.gitkeep", ""),
+    write("05-Resources/.gitkeep", ""),
+    write("07-Archives/.gitkeep", ""),
+    write("private/raw-sessions/.gitkeep", ""),
+    {
+      targetPath: configPath,
+      content: `${JSON.stringify(localConfig, null, 2)}\n`
+    },
+    {
+      targetPath: projectMapPath,
+      content: `${JSON.stringify(projectMap, null, 2)}\n`
+    }
+  ];
+}
+
+function hashContent(content: string): string {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+function canonicalVaultPathKeyForTest(vaultPath: string): string {
+  const resolvedVaultPath = path.resolve(vaultPath);
+  let currentPath = resolvedVaultPath;
+
+  while (!existsSync(currentPath)) {
+    const parent = path.dirname(currentPath);
+
+    if (parent === currentPath) {
+      return resolvedVaultPath;
+    }
+
+    currentPath = parent;
+  }
+
+  return path.join(realpathSync.native(currentPath), path.relative(currentPath, resolvedVaultPath));
+}
+
+function initStateForWorkspace(workspace: ReturnType<typeof makeWorkspace>): Record<string, unknown> {
+  const writes = plannedInitWrites(workspace);
+
+  return {
+    version: 1,
+    operationId: "init",
+    command: "init",
+    status: "in-progress",
+    targetVaultPathKey: canonicalVaultPathKeyForTest(workspace.vaultPath),
+    locale: "zh-TW",
+    vaultPath: workspace.vaultPath,
+    configPath: path.join(workspace.configHome, "agent-notes", "config.json"),
+    projectMapPath: path.join(workspace.configHome, "agent-notes", "project-map.json"),
+    createdAt: "2026-06-07T00:00:00.000Z",
+    updatedAt: "2026-06-07T00:00:00.000Z",
+    files: writes.map((write) => ({
+      targetPath: write.targetPath,
+      contentHash: hashContent(write.content)
+    }))
+  };
+}
+
+function writeInitState(workspace: ReturnType<typeof makeWorkspace>, state: Record<string, unknown> = initStateForWorkspace(workspace)): void {
+  const statePath = path.join(workspace.configHome, "agent-notes", "init-state.json");
+
+  writeFixtureFile(statePath, initStateStoreJson(state));
+}
+
+function initStateStoreJson(state: Record<string, unknown>): string {
+  const targetVaultPathKey = state.targetVaultPathKey;
+
+  if (typeof targetVaultPathKey !== "string") {
+    throw new Error("test init state requires targetVaultPathKey");
+  }
+
+  return `${JSON.stringify(
+    {
+      version: 1,
+      command: "init",
+      states: {
+        [targetVaultPathKey]: state
+      }
+    },
+    null,
+    2
+  )}\n`;
 }
 
 function expectAgentNotesError(error: unknown, code: ErrorCode): void {
@@ -461,6 +664,646 @@ describe("init command", () => {
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
       expect(readFileSync(configPath, "utf8")).toBe("{ invalid json");
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("偵測到 partial init state 時要求明確 resume 或 rollback", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeInitState(workspace);
+
+      await runInit(
+        {
+          dryRun: true,
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 只補 pending init files 並移除 init-state", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const writes = plannedInitWrites(workspace);
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      writeFixtureFile(writes[1].targetPath, writes[1].content);
+
+      const result = await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.status).toBe("resumed");
+      expect(result.batch.plan.filesToSkip).toContain(writes[0].targetPath);
+      expect(result.batch.plan.filesToSkip).toContain(writes[1].targetPath);
+      expect(readFileSync(path.join(workspace.vaultPath, "06-Templates", "summary-file.md"), "utf8")).toBe(
+        writes[2].content
+      );
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "config.json"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "project-map.json"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init.lock"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 遇到已被使用者修改的 partial file 時拒絕覆蓋", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const writes = plannedInitWrites(workspace);
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, "user edit");
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      expect(readFileSync(path.join(workspace.vaultPath, ".gitignore"), "utf8")).toBe("user edit");
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(true);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume conflict error 不輸出完整本機路徑", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const writes = plannedInitWrites(workspace);
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, "user edit");
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      expect((error as AgentNotesError).message).toContain(".gitignore");
+      expect((error as AgentNotesError).message).not.toContain(workspace.root);
+      expect((error as AgentNotesError).message).not.toContain(workspace.vaultPath);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 拒絕 relative init-state target path", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeInitState(workspace, {
+        ...initStateForWorkspace(workspace),
+        files: [
+          {
+            targetPath: "relative.md",
+            contentHash: hashContent("content")
+          }
+        ]
+      });
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 拒絕超出 allowlist 的 absolute init-state target path", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeInitState(workspace, {
+        ...initStateForWorkspace(workspace),
+        files: [
+          {
+            targetPath: path.join(workspace.root, "outside.md"),
+            contentHash: hashContent("content")
+          }
+        ]
+      });
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 拒絕格式無效的 init-state contentHash", async () => {
+    const workspace = makeWorkspace();
+    const writes = plannedInitWrites(workspace);
+
+    try {
+      writeInitState(workspace, {
+        ...initStateForWorkspace(workspace),
+        files: [
+          {
+            targetPath: writes[0].targetPath,
+            contentHash: "sha256:bad"
+          }
+        ]
+      });
+
+      await runInit(
+        {
+          resume: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 使用 symlink alias 與實體路徑時仍找到同一個 init-state", async () => {
+    const workspace = makeWorkspace();
+    const realParent = path.join(workspace.root, "real-parent");
+    const symlinkParent = path.join(workspace.root, "linked-parent");
+    const linkedWorkspace = {
+      ...workspace,
+      vaultPath: path.join(symlinkParent, "Agent-Notes")
+    };
+
+    try {
+      mkdirSync(realParent, {
+        recursive: true
+      });
+      symlinkSync(realParent, symlinkParent, "dir");
+      writeInitState(linkedWorkspace);
+
+      const result = await runInit(
+        {
+          resume: true,
+          vaultPath: path.join(realParent, "Agent-Notes")
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.status).toBe("resumed");
+      expect(existsSync(path.join(realParent, "Agent-Notes", ".gitignore"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("resume 指定不符合 init-state 的 vault path 時拒絕", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeInitState(workspace);
+
+      await runInit(
+        {
+          resume: true,
+          vaultPath: path.join(workspace.root, "Other-Agent-Notes")
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_PARTIAL);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("既有其他 vault 的 init-state 不阻擋指定新 vault 初始化", async () => {
+    const workspace = makeWorkspace();
+    const otherVaultPath = path.join(workspace.root, "Other-Agent-Notes");
+
+    try {
+      writeInitState(workspace);
+
+      const result = await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: otherVaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.status).toBe("planned");
+      expect(existsSync(path.join(otherVaultPath, ".gitignore"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(true);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback 移除符合 init plan 的 partial files 與 init-state", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const writes = plannedInitWrites(workspace);
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      writeFixtureFile(writes[1].targetPath, writes[1].content);
+      writeFixtureFile(writes[2].targetPath, writes[2].content);
+
+      const result = await runInit(
+        {
+          rollback: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+
+      expect(result.status).toBe("rolled-back");
+      expect(existsSync(writes[0].targetPath)).toBe(false);
+      expect(existsSync(writes[1].targetPath)).toBe(false);
+      expect(existsSync(writes[2].targetPath)).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback lock 已存在時回 WRITE_CONFLICT 且不刪檔", async () => {
+    const workspace = makeWorkspace();
+    const writes = plannedInitWrites(workspace);
+
+    try {
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      writeFixtureFile(path.join(workspace.configHome, "agent-notes", "init.lock"), "existing");
+
+      await runInit(
+        {
+          rollback: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      expect(readFileSync(writes[0].targetPath, "utf8")).toBe(writes[0].content);
+      expect(readFileSync(path.join(workspace.configHome, "agent-notes", "init.lock"), "utf8")).toBe("existing");
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(true);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback 拿到 lock 後若 init-state 已改變則拒絕使用 stale state 刪檔", async () => {
+    const workspace = makeWorkspace();
+    const writes = plannedInitWrites(workspace);
+    const statePath = path.join(workspace.configHome, "agent-notes", "init-state.json");
+    const staleState = initStateForWorkspace(workspace);
+    const newerState = {
+      ...staleState,
+      createdAt: "2026-06-07T00:00:01.000Z",
+      updatedAt: "2026-06-07T00:00:01.000Z"
+    };
+    const staleStateRaw = initStateStoreJson(staleState);
+    const newerStateRaw = initStateStoreJson(newerState);
+
+    vi.resetModules();
+
+    try {
+      writeFixtureFile(statePath, staleStateRaw);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      const fsActual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      let stateReadCount = 0;
+
+      vi.doMock("node:fs", () => ({
+        ...fsActual,
+        readFileSync: (...args: Parameters<typeof fsActual.readFileSync>) => {
+          const [targetPath] = args;
+
+          if (String(targetPath) === statePath) {
+            stateReadCount += 1;
+
+            if (stateReadCount === 1) {
+              fsActual.writeFileSync(statePath, newerStateRaw);
+
+              return staleStateRaw;
+            }
+          }
+
+          return fsActual.readFileSync(...args);
+        }
+      }));
+
+      const { runInit: mockedRunInit } = await import("../src/commands/init.js");
+
+      await mockedRunInit(
+        {
+          rollback: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expect((error as { readonly code?: ErrorCode }).code).toBe(ErrorCode.WRITE_CONFLICT);
+      expect(readFileSync(writes[0].targetPath, "utf8")).toBe(writes[0].content);
+      expect(readFileSync(statePath, "utf8")).toBe(newerStateRaw);
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+      cleanup(workspace.root);
+    }
+  });
+
+  it("fresh init lock 已存在時不留下假的 init-state", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      writeFixtureFile(path.join(workspace.configHome, "agent-notes", "init.lock"), "existing");
+
+      await runInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+      expect(existsSync(path.join(workspace.vaultPath, ".gitignore"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("fresh init 取得 lock 後若同 key init-state 已出現則不覆寫", async () => {
+    const workspace = makeWorkspace();
+    const statePath = path.join(workspace.configHome, "agent-notes", "init-state.json");
+    const existingStateRaw = initStateStoreJson(initStateForWorkspace(workspace));
+
+    vi.resetModules();
+
+    try {
+      const fsActual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      let stateExistsChecks = 0;
+
+      vi.doMock("node:fs", () => ({
+        ...fsActual,
+        existsSync: (...args: Parameters<typeof fsActual.existsSync>) => {
+          const [targetPath] = args;
+
+          if (String(targetPath) === statePath) {
+            stateExistsChecks += 1;
+
+            if (stateExistsChecks === 1) {
+              fsActual.mkdirSync(path.dirname(statePath), {
+                recursive: true
+              });
+              fsActual.writeFileSync(statePath, existingStateRaw);
+
+              return false;
+            }
+          }
+
+          return fsActual.existsSync(...args);
+        }
+      }));
+
+      const { runInit: mockedRunInit } = await import("../src/commands/init.js");
+
+      await mockedRunInit(
+        {
+          yes: true,
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expect((error as { readonly code?: ErrorCode }).code).toBe(ErrorCode.WRITE_CONFLICT);
+      expect(existsSync(path.join(workspace.vaultPath, ".gitignore"))).toBe(false);
+      expect(readFileSync(statePath, "utf8")).toBe(existingStateRaw);
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback dry-run 顯示刪除摘要且不刪檔或移除 init-state", async () => {
+    const workspace = makeWorkspace();
+    const output: string[] = [];
+
+    try {
+      const writes = plannedInitWrites(workspace);
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, writes[0].content);
+      writeFixtureFile(writes[1].targetPath, writes[1].content);
+
+      const result = await runInitCommand(
+        {
+          rollback: true,
+          dryRun: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          stdout: (value) => output.push(value)
+        }
+      );
+
+      expect(result.status).toBe("rolled-back");
+      expect(readFileSync(writes[0].targetPath, "utf8")).toBe(writes[0].content);
+      expect(readFileSync(writes[1].targetPath, "utf8")).toBe(writes[1].content);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(true);
+      expect(output.join("")).toContain("filesToDelete: 2");
+      expect(output.join("")).toContain("filesAlreadyMissing: 15");
+      expect(output.join("")).toContain("modifiedConflicts: 0");
+      expect(output.join("")).not.toContain("filesToCreate:");
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("rollback 保留已被使用者修改的 partial file 並保留 init-state", async () => {
+    const workspace = makeWorkspace();
+    const writes = plannedInitWrites(workspace);
+
+    try {
+      writeInitState(workspace);
+      writeFixtureFile(writes[0].targetPath, "user edit");
+      writeFixtureFile(writes[1].targetPath, writes[1].content);
+
+      await runInit(
+        {
+          rollback: true
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.WRITE_CONFLICT);
+      expect(readFileSync(writes[0].targetPath, "utf8")).toBe("user edit");
+      expect(readFileSync(writes[1].targetPath, "utf8")).toBe(writes[1].content);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(true);
     } finally {
       cleanup(workspace.root);
     }
