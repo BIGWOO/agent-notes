@@ -208,6 +208,27 @@ describe("session and provenance schemas", () => {
     }
   });
 
+  it("拒絕 unknown frontmatter string 中的 private path", async () => {
+    const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
+
+    for (const privatePath of [
+      "private/leak.md",
+      "03-Projects/private/leak.md",
+      "03-Projects/../private/leak.md",
+      "03-Projects\\.agent-notes\\source-index.json"
+    ]) {
+      try {
+        parseSessionFrontmatter({
+          ...frontmatter,
+          somePath: privatePath
+        });
+        throw new Error("expected parseSessionFrontmatter to fail");
+      } catch (error) {
+        expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+      }
+    }
+  });
+
   it("拒絕 date-only capturedAt", async () => {
     const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
 
@@ -219,6 +240,27 @@ describe("session and provenance schemas", () => {
       throw new Error("expected parseSessionFrontmatter to fail");
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+    }
+  });
+
+  it("拒絕非法 calendar datetime", async () => {
+    const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
+
+    for (const capturedAt of [
+      "2026-02-31T12:00:00Z",
+      "2026-06-06T24:00:00Z",
+      "2026-06-06T12:00:00+24:00",
+      "2026-06-06T12:00:00+08:60"
+    ]) {
+      try {
+        parseSessionFrontmatter({
+          ...frontmatter,
+          capturedAt
+        });
+        throw new Error("expected parseSessionFrontmatter to fail");
+      } catch (error) {
+        expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+      }
     }
   });
 

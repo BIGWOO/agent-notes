@@ -22,12 +22,12 @@ const forbiddenTrackedFrontmatterKeys = [
 const blockedTrackedStringPatterns = [
   /\/Users\//u,
   /\/home\//u,
-  /^[A-Za-z]:[\\/]/u,
-  /^\\\\/u,
+  /^[A-Za-z]:\//u,
+  /^\/\//u,
   /\$HOME/u,
   /^~\//u,
-  /\.agent-notes\//u,
-  /private\/raw-sessions\//u
+  /(^|\/)\.agent-notes(\/|$)/u,
+  /(^|\/)private\//u
 ] as const;
 
 const sourceSchema = z
@@ -110,7 +110,9 @@ export function parseSessionFrontmatter(value: unknown): SessionFrontmatter {
 
 function findBlockedTrackedValues(value: unknown, path: readonly string[] = []): string[] {
   if (typeof value === "string") {
-    return blockedTrackedStringPatterns.some((pattern) => pattern.test(value)) ? [path.join(".")] : [];
+    const normalizedValue = value.replaceAll("\\", "/");
+
+    return blockedTrackedStringPatterns.some((pattern) => pattern.test(normalizedValue)) ? [path.join(".")] : [];
   }
 
   if (Array.isArray(value)) {
