@@ -129,7 +129,7 @@ function isBlockedTrackedString(value: string, path: readonly string[]): boolean
     return true;
   }
 
-  const key = path.at(-1);
+  const isAllowedTopLevelPrivateVisibility = path.length === 1 && path[0] === "visibility" && value === "private";
   const normalizedPath = normalizedValue === "." ? normalizedValue : normalizedValue.replace(/\/+$/u, "");
   const segments = normalizedPath.split("/").filter((segment) => segment !== "" && segment !== ".");
 
@@ -137,5 +137,5 @@ function isBlockedTrackedString(value: string, path: readonly string[]): boolean
     return true;
   }
 
-  return key !== "visibility" && segments.includes("private");
+  return !isAllowedTopLevelPrivateVisibility && segments.includes("private");
 }

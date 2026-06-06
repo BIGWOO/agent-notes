@@ -241,6 +241,22 @@ describe("session and provenance schemas", () => {
     expect(frontmatter.visibility).toBe("private");
   });
 
+  it("拒絕 nested visibility 欄位中的 private path", async () => {
+    const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
+
+    try {
+      parseSessionFrontmatter({
+        ...frontmatter,
+        metadata: {
+          visibility: "private/leak.md"
+        }
+      });
+      throw new Error("expected parseSessionFrontmatter to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+    }
+  });
+
   it("拒絕 date-only capturedAt", async () => {
     const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
 
