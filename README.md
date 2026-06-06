@@ -22,20 +22,33 @@ Agent Notes 是一個 local-first CLI，用來把 AI agent 完成的工作、討
 
 | 層級 | 用途 | 範例位置 |
 | --- | --- | --- |
-| Raw session | 保留追溯與稽核線索 | `01-Inbox/raw-sessions/` |
+| Source reference | 保留追溯線索，預設只存本機 pointer | session card frontmatter |
 | Session card | 單次有意義工作單元的結構化摘要 | `03-Projects/<project>/04-sessions/` |
 | Project rollup | 專案、客戶、活動、團隊現況與決策 | `03-Projects/<project>/03-context/` |
 | Periodic review | 每日或每週跨專案摘要 | `02-Daily/` |
 
-## 預計 CLI
+## MVP CLI
+
+全域安裝後：
 
 ```bash
-agent-notes init --vault ~/notes
-agent-notes capture --repo "$PWD" --tool codex
+agent-notes init
+agent-notes project add --repo "$PWD"
+agent-notes capture --repo "$PWD" --tool codex --scope project --summary-file ./agent-summary.md
 agent-notes context --repo "$PWD"
+agent-notes integrate --list
+agent-notes integrate codex --dry-run
+agent-notes integrate codex --apply
+agent-notes doctor
+```
+
+未全域安裝時，每個 command 都可改用 `npx agent-notes@latest ...`。需要設定 agent hook 時，建議使用全域安裝或固定 binary path，避免 hook 執行時找不到 CLI。
+
+## Planned CLI
+
+```bash
 agent-notes rollup --daily
 agent-notes rollup --weekly
-agent-notes doctor
 ```
 
 ## 設計原則
