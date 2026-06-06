@@ -11,6 +11,7 @@ import {
   writeFileSync
 } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { Command } from "commander";
 import { defaultConfigDir, defaultConfigPath, loadConfig } from "../core/config.js";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
@@ -39,8 +40,14 @@ interface InitCommandOptions {
   readonly dryRun?: boolean;
 }
 
+interface InitConfirmPrompt {
+  readonly message: string;
+  readonly defaultValue: boolean;
+}
+
 export interface InitContext extends PathOptions {
   readonly stdout?: (value: string) => void;
+  readonly confirm?: (prompt: InitConfirmPrompt) => Promise<boolean> | boolean;
 }
 
 export interface InitResult {
@@ -211,12 +218,43 @@ export function registerInitCommand(program: Command): void {
 }
 
 export async function runInitCommand(options: InitCommandOptions, context: InitContext = {}): Promise<InitResult> {
-  const result = await runInit(options, context);
+  const result = await runInit(options, withDefaultInitConfirm(context));
   const output = context.stdout ?? ((value: string) => process.stdout.write(value));
 
   output(formatInitResult(result, options.dryRun === true));
 
   return result;
+}
+
+function withDefaultInitConfirm(context: InitContext): InitContext {
+  if (context.confirm !== undefined || process.stdin.isTTY !== true) {
+    return context;
+  }
+
+  return {
+    ...context,
+    confirm: defaultInitConfirm
+  };
+}
+
+async function defaultInitConfirm(prompt: InitConfirmPrompt): Promise<boolean> {
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  try {
+    const suffix = prompt.defaultValue ? "[Y/n]" : "[y/N]";
+    const answer = (await readline.question(`${prompt.message}\nContinue? ${suffix} `)).trim().toLowerCase();
+
+    if (answer === "") {
+      return prompt.defaultValue;
+    }
+
+    return answer === "y" || answer === "yes";
+  } finally {
+    readline.close();
+  }
 }
 
 export async function runInit(options: InitCommandOptions, context: InitContext = {}): Promise<InitResult> {
@@ -278,7 +316,7 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     throw new AgentNotesError(ErrorCode.INIT_PARTIAL, "找不到符合 vault path 的 init-state.json");
   }
 
-  validateWritableInitOptions(options);
+  validateWritableInitOptions(options, context);
 
   validateTargetVault(vaultPath);
 
@@ -304,6 +342,13 @@ export async function runInit(options: InitCommandOptions, context: InitContext 
     projectMapPath,
     vaultPath,
     writes
+  });
+
+  await confirmInitWritePlan(options, context, {
+    configPath,
+    projectMapPath,
+    vaultPath,
+    batch
   });
 
   const writeResult = await executeWriteBatch({
@@ -344,13 +389,12 @@ function validateStaticInitOptions(options: InitCommandOptions): void {
   }
 }
 
-function validateWritableInitOptions(options: InitCommandOptions): void {
+function validateWritableInitOptions(options: InitCommandOptions, context: InitContext): void {
   if (options.dryRun === true) {
     return;
   }
 
   if (
-    options.yes !== true ||
     options.lang === undefined ||
     options.vaultPath === undefined ||
     options.integrations !== false ||
@@ -360,6 +404,44 @@ function validateWritableInitOptions(options: InitCommandOptions): void {
       ErrorCode.NON_INTERACTIVE_REQUIRED,
       "非互動 init 需要 --yes、--lang、--vault-path、--no-integrations、--no-project"
     );
+  }
+
+  if (options.yes !== true && context.confirm === undefined) {
+    throw new AgentNotesError(
+      ErrorCode.NON_INTERACTIVE_REQUIRED,
+      "非互動 init 需要 --yes；互動模式需可顯示確認提示"
+    );
+  }
+}
+
+async function confirmInitWritePlan(
+  options: InitCommandOptions,
+  context: InitContext,
+  input: {
+    readonly batch: PreparedWriteBatch;
+    readonly configPath: string;
+    readonly projectMapPath: string;
+    readonly vaultPath: string;
+  }
+): Promise<void> {
+  if (options.dryRun === true || options.yes === true) {
+    return;
+  }
+
+  const confirmed = await context.confirm?.({
+    message: [
+      "Agent Notes init will create:",
+      `- vault: ${input.vaultPath}`,
+      `- local config: ${input.configPath}`,
+      `- project map: ${input.projectMapPath}`,
+      `- files to create: ${input.batch.plan.filesToCreate.length}`,
+      `- files to modify: ${input.batch.plan.filesToModify.length}`
+    ].join("\n"),
+    defaultValue: false
+  });
+
+  if (confirmed !== true) {
+    throw new AgentNotesError(ErrorCode.INIT_CANCELLED, "使用者取消 init");
   }
 }
 

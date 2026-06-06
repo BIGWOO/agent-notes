@@ -499,6 +499,110 @@ describe("init command", () => {
     }
   });
 
+  it("缺少 --yes 且無互動 confirm 時回 NON_INTERACTIVE_REQUIRED", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.NON_INTERACTIVE_REQUIRED);
+      expect(existsSync(path.join(workspace.vaultPath, ".gitignore"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動 confirm 取消時回 INIT_CANCELLED 且不寫檔", async () => {
+    const workspace = makeWorkspace();
+    const prompts: string[] = [];
+
+    try {
+      await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: (prompt) => {
+            prompts.push(prompt.message);
+
+            return false;
+          }
+        }
+      );
+      throw new Error("expected runInit to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INIT_CANCELLED);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("files to create: 17");
+      expect(existsSync(path.join(workspace.vaultPath, ".gitignore"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "config.json"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init.lock"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("互動 confirm 接受後建立 vault、config 與 project map", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const result = await runInit(
+        {
+          lang: "zh-TW",
+          vaultPath: workspace.vaultPath,
+          integrations: false,
+          project: false
+        },
+        {
+          cwd: workspace.root,
+          env: {
+            HOME: workspace.home,
+            XDG_CONFIG_HOME: workspace.configHome
+          },
+          homeDir: workspace.home,
+          confirm: () => true
+        }
+      );
+
+      expect(result.status).toBe("planned");
+      expect(result.result.written).toHaveLength(17);
+      expect(readFileSync(path.join(workspace.vaultPath, ".gitignore"), "utf8")).toContain("private/");
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "config.json"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "project-map.json"))).toBe(true);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
+      expect(existsSync(path.join(workspace.configHome, "agent-notes", "init.lock"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
   it("既有非 Agent Notes 目錄非空時拒絕覆蓋", async () => {
     const workspace = makeWorkspace();
 
