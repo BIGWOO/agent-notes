@@ -20,14 +20,12 @@ const forbiddenTrackedFrontmatterKeys = [
 ] as const;
 
 const blockedTrackedStringPatterns = [
-  /\/Users\//u,
-  /\/home\//u,
+  /^\/(?:Users|home|tmp)(\/|$)/u,
   /^[A-Za-z]:\//u,
   /^\/\//u,
-  /\$HOME/u,
-  /^~\//u,
-  /(^|\/)\.agent-notes(\/|$)/u,
-  /(^|\/)private\//u
+  /^\$HOME(\/|$)/u,
+  /^\$\{HOME\}(\/|$)/u,
+  /^~(\/|$)/u
 ] as const;
 
 const sourceSchema = z
@@ -110,9 +108,7 @@ export function parseSessionFrontmatter(value: unknown): SessionFrontmatter {
 
 function findBlockedTrackedValues(value: unknown, path: readonly string[] = []): string[] {
   if (typeof value === "string") {
-    const normalizedValue = value.replaceAll("\\", "/");
-
-    return blockedTrackedStringPatterns.some((pattern) => pattern.test(normalizedValue)) ? [path.join(".")] : [];
+    return isBlockedTrackedString(value, path) ? [path.join(".")] : [];
   }
 
   if (Array.isArray(value)) {
@@ -124,4 +120,22 @@ function findBlockedTrackedValues(value: unknown, path: readonly string[] = []):
   }
 
   return Object.entries(value).flatMap(([key, item]) => findBlockedTrackedValues(item, [...path, key]));
+}
+
+function isBlockedTrackedString(value: string, path: readonly string[]): boolean {
+  const normalizedValue = value.replaceAll("\\", "/");
+
+  if (blockedTrackedStringPatterns.some((pattern) => pattern.test(normalizedValue))) {
+    return true;
+  }
+
+  const key = path.at(-1);
+  const normalizedPath = normalizedValue === "." ? normalizedValue : normalizedValue.replace(/\/+$/u, "");
+  const segments = normalizedPath.split("/").filter((segment) => segment !== "" && segment !== ".");
+
+  if (segments.includes(".agent-notes")) {
+    return true;
+  }
+
+  return key !== "visibility" && segments.includes("private");
 }

@@ -213,9 +213,15 @@ describe("session and provenance schemas", () => {
 
     for (const privatePath of [
       "private/leak.md",
+      "private",
       "03-Projects/private/leak.md",
+      "03-Projects/private",
       "03-Projects/../private/leak.md",
-      "03-Projects\\.agent-notes\\source-index.json"
+      "03-Projects/../private",
+      "03-Projects\\.agent-notes\\source-index.json",
+      "${HOME}/repo",
+      "~",
+      "/tmp/repo"
     ]) {
       try {
         parseSessionFrontmatter({
@@ -227,6 +233,12 @@ describe("session and provenance schemas", () => {
         expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
       }
     }
+  });
+
+  it("允許 visibility 使用 private", async () => {
+    const frontmatter = parseSessionFrontmatter(await readJsonFixture("session/valid-project-session.json"));
+
+    expect(frontmatter.visibility).toBe("private");
   });
 
   it("拒絕 date-only capturedAt", async () => {
