@@ -1,47 +1,186 @@
 # CLI Command 規格
 
-Status: draft
+Status: implementation-ready for Phase 1 draft
 Last Updated: 2026-06-06
-Source: 從 `docs/PRD.md` 拆分整理
+Source: Phase 1 implementation planning
 
-本檔定義 CLI command plan 與各 command 的階段、用途與基本契約。
+本檔定義 Phase 1 CLI command contract。目標是讓 MVP 先可用、可測試、可回復；post-MVP command 只保留邊界，不在 Phase 1 實作。
 
 ---
 
-## CLI Command Plan
+## Common Contract
 
-| Command | 階段 | 用途 |
-| --- | --- | --- |
-| `init` | v0.1 | 建立標準 Agent Notes vault、初始化 config，並可選擇啟動 integration wizard |
-| `project` | v0.1 | 新增、列出與檢查 project map entries；Phase 4 支援 Team Vault `attach` |
-| `capture` | v0.1 | 從目前 context 或指定檔案建立 session card，並可用 `--visibility` 明確設定 sharing visibility |
-| `context` | v0.1 | 為 repo 輸出 context packet |
-| `doctor` | v0.1 | 驗證設定 |
-| `integrate` | v0.1 | 偵測、預覽與明確套用 agent hook integration |
-| `trace` | v0.1 | 追溯 item id、session id 或 source ref 的來源 |
-| `rollup` | Phase 3 | 產生每日或每週摘要 |
-| `classify` | post-MVP | 預覽 routing decision |
-| `sync` | post-MVP | 可選 Git-aware note sync helper |
-| `promote` | Phase 4 | 將 `team-safe` personal session 產生 Team Vault branch/PR handoff |
-| `publish` | Phase 4 | 產生 sanitized read-only sharing output |
+Phase 1 所有 command 需遵守同一組基本行為：
 
-## 安裝後預設流程
+- 預設輸出人類可讀文字，測試以 exit code 與檔案結果為準。
+- `--dry-run` 不寫任何檔案，只列出將讀取、建立、修改或略過的 path。
+- 會寫檔的 command 必須先載入 config、驗證 vault、取得必要 lock，並在寫入前做 backup 或 atomic write。
+- 任何 command 都不得把本機絕對 repo path、vault path、project map path 寫入 tracked Markdown。
+- 找不到 config 時，除 `init`、`integrate --list`、`--help`、`--version` 外一律回傳 `CONFIG_NOT_FOUND`。
+- 讀到 post-MVP config，例如 `sharing.mode=team`，Phase 1 一律回傳 `FEATURE_UNSUPPORTED`。
+- `--help` 與 `--version` 不需要 config。
+- 未分類錯誤回傳 `UNKNOWN_ERROR`，但實作應盡量映射到 [`error-codes.md`](error-codes.md) 的穩定錯誤碼。
 
-`init` 是使用者第一次執行時的主要入口。MVP 的 `init` 應聚焦在建立 local-first runtime，而不是直接接管 agent：
+## Phase 1 Commands
 
-1. 選擇語言，並依系統 locale 調整預選順序
-2. 選擇標準 Agent Notes vault 的建立路徑，預設使用 `~/Documents/Agent-Notes/`
-3. 若目標路徑已存在且非空，提示改用新的路徑，不在既有 Obsidian vault 補結構
-4. 顯示將建立的標準 vault 目錄與檔案
-5. 使用者確認後才建立必要目錄
-6. 建立新的 Obsidian-compatible Agent Notes vault
-7. 建立 `~/.config/agent-notes/config.json`
-8. 建立本機 project map
-9. 詢問是否把目前資料夾加入第一個 project
-10. 顯示 manual capture 與 context command 範例
-11. 詢問是否現在連接 AI agents，並提供可多選的 agent 清單
-12. 對使用者選取的每個 agent 顯示 dry-run 摘要與確認提示
-13. 使用者逐一確認後，委派 `integrate` engine 套用對應設定
-14. 自動執行或建議執行 `agent-notes doctor`
+| Command | Required | Optional | Writes | Main Errors |
+| --- | --- | --- | --- | --- |
+| `init` | none | `--yes`、`--lang`、`--vault-path`、`--no-integrations`、`--no-project`、`--project-repo`、`--allow-git-worktree-vault`、`--resume`、`--rollback`、`--dry-run` | local config、project map、vault skeleton、templates、optional integrations | `PATH_INVALID`、`PATH_UNSAFE`、`VAULT_EXISTS_NON_EMPTY`、`INIT_PARTIAL` |
+| `project add` | `--repo` | `--name`、`--project-id`、`--dry-run` | project map、project context templates | `PROJECT_MAP_INVALID`、`PATH_INVALID`、`WRITE_CONFLICT` |
+| `project list` | none | `--repo` | none | `CONFIG_NOT_FOUND`、`PROJECT_MAP_INVALID` |
+| `project check` | none | `--repo` | none | `PROJECT_NOT_FOUND`、`PROJECT_MAP_INVALID` |
+| `capture` | `--summary-file` except `--scope ignore` | `--repo`、`--tool`、`--scope`、`--visibility`、`--source-file`、`--dry-run` | session card、source index、provenance log、optional marker blocks | `INVALID_SUMMARY_FILE`、`PROJECT_NOT_FOUND`、`PRIVATE_DATA_RISK`、`WRITE_CONFLICT` |
+| `context` | `--repo` | `--max-chars` | none | `PROJECT_NOT_FOUND`、`PROJECT_MAP_INVALID` |
+| `doctor` | none | `--check`、`--json` | none in Phase 1 | `CONFIG_INVALID`、`VAULT_NOT_FOUND`、`PRIVATE_DATA_RISK`、`PROVENANCE_ORPHAN` |
+| `trace` | positional `id` | `--json` | none | `TRACE_TARGET_NOT_FOUND`、`SOURCE_NOT_FOUND`、`PROVENANCE_ORPHAN` |
+| `integrate --list` | none | none | none | none |
+| `integrate codex --dry-run` | none | `--binary` | none | `INTEGRATION_NOT_FOUND`、`INTEGRATION_BINARY_UNSTABLE` |
+| `integrate codex --apply` | none | `--binary`、`--yes` | Codex local hook config backup + patch | `INTEGRATION_APPLY_FAILED`、`INTEGRATION_BINARY_UNSTABLE` |
 
-Hook integration engine 必須獨立於 `init`，讓使用者日後可用 `agent-notes integrate ...` 補設定；`init` 只是首次 onboarding 的互動式呼叫入口。
+## Command Details
+
+### `agent-notes init`
+
+`init` 是唯一可在沒有 config 時執行的 setup command。完整 onboarding 規則見 [`init-onboarding.md`](init-onboarding.md)。
+
+Phase 1 `init` 的完成條件：
+
+- 建立新的標準 Agent Notes vault，不採用既有 Obsidian vault。
+- 建立 local config 與 empty project map。
+- 建立 vault `.gitignore`，至少忽略 `private/`、`.agent-notes/`、`.DS_Store`。
+- 建立 `00-Meta/Systems/agent-note-protocol.md`、`06-Templates/` 與 project context templates。
+- 非互動模式缺必要 flags 時回傳 `NON_INTERACTIVE_REQUIRED`。
+- `--dry-run` 顯示 plan，不建立任何檔案。
+
+### `agent-notes project add --repo <path>`
+
+`project add` 把 repo 綁定到 personal vault 的 local project map。
+
+規則：
+
+- `<path>` 必須 canonicalize，並確認可讀。
+- 若 `<path>` 是 Git repo，`repoId` 預設用 repo root basename slug。
+- `projectId` 預設等於 `repoId`，若衝突則加短 suffix。
+- `notePath` 預設為 `03-Projects/<Project Name>`，必須是 vault 相對路徑。
+- 若 project 已存在且 repo path 已綁定，command idempotent，回傳 `OK` 並顯示 existing entry。
+- 不把絕對 repo path 寫入 Markdown，只寫 local project map。
+
+### `agent-notes capture`
+
+`capture` 是 Phase 1 核心寫入 command。它只接受 deterministic summary file，不解析完整 transcript。
+
+最小成功流程：
+
+1. 載入 config 與 project map。
+2. 驗證 `--summary-file` headings 與 `Summary`。
+3. 依 `--scope` 與 `--repo` 決定目的地。
+4. 建立 opaque `sourceRef`。
+5. 準備 session card、source index、provenance log 與 marker block diff。
+6. 對最終將寫入的 frontmatter、body 與 marker diff 執行 public-safe gating；`team-safe` 或 `public-safe` 失敗時停止，不寫檔。
+7. 在同一 write batch 內寫入 session card、source index、provenance log 與 marker blocks；若 marker item 無法同時保留 provenance，該 marker update 必須 abort。
+
+`--scope` 行為：
+
+| Scope | Destination | Project Required | Marker Update |
+| --- | --- | --- | --- |
+| `ignore` | none | no | no |
+| `inbox` | `01-Inbox/` | no | no |
+| `daily` | `02-Daily/` | no | no |
+| `area` | `04-Areas/` | no | no |
+| `personal` | `00-Meta/Personal/` | no | no |
+| `project` | project note path | yes | yes |
+
+未提供 `--scope` 時：
+
+- `--repo` 可解析到 project 時，使用 `project`。
+- `--repo` 無法解析時，使用 `inbox` 並提示 `project add`。
+- 未提供 `--repo` 時，使用 `inbox`。
+
+Phase 1 不支援 raw transcript copy。`--source-file` 只建立 local pointer；`--include-raw` 保留給 post-MVP，Phase 1 呼叫時回傳 `FEATURE_UNSUPPORTED`。
+
+### `agent-notes context --repo <path>`
+
+`context` 只讀取 personal vault 與 project map，輸出給 agent 開工前使用的 context packet。
+
+輸出內容優先順序：
+
+1. project README generated summary
+2. active tasks
+3. recent decisions
+4. pitfalls
+5. recent sessions
+
+規則：
+
+- 預設 size bound 為 12000 characters，`--max-chars` 可調整本次輸出上限。
+- 不讀取 `private/`、`.agent-notes/` 或 raw transcript。
+- 找不到 project 時回傳 `PROJECT_NOT_FOUND`。
+- 詳細 packet contract 見 [`../architecture/context-pipeline.md`](../architecture/context-pipeline.md)。
+
+### `agent-notes doctor`
+
+`doctor` 是安全檢查 command。Phase 1 預設不自動修復，只列出狀態與建議。
+
+Phase 1 checks：
+
+| Check | Reads | Blocking Code | Notes |
+| --- | --- | --- | --- |
+| `config` | local config | `CONFIG_NOT_FOUND` / `CONFIG_INVALID` | `--check config` 只跑此項 |
+| `vault` | vault root、`.gitignore`、required dirs | `VAULT_NOT_FOUND` / `VAULT_NOT_WRITABLE` / `INIT_PARTIAL` / `PRIVATE_DATA_RISK` | 確認 `private/`、`.agent-notes/` 被 ignore |
+| `project-map` | local project map | `PROJECT_MAP_INVALID` | note path 必須 vault-relative |
+| `templates` | `06-Templates/`、protocol file | `CONFIG_INVALID` | Phase 1 只檢查存在與最小 headings |
+| `markers` | project context files | `MARKER_INVALID` / `PROVENANCE_ORPHAN` | marker 格式錯誤或 generated item 缺來源 |
+| `provenance` | `.agent-notes/source-index.json`、`.agent-notes/provenance.jsonl`、session cards | `SOURCE_NOT_FOUND` / `PROVENANCE_ORPHAN` | sourceRef、sessionId、itemId 必須互相可追溯 |
+| `public-safe` | tracked Markdown only | `PRIVATE_DATA_RISK` | heuristic scan，不宣稱能證明完全無敏感資訊 |
+| `integrations` | supported agent local config | `INTEGRATION_NOT_FOUND` / `INTEGRATION_UNSUPPORTED` | 不寫 hook；只顯示狀態 |
+
+輸出規則：
+
+- 預設輸出人類可讀 summary；`--json` 輸出 `{ status, checks: [{ name, status, code, message, paths }] }`。
+- 若多個 check 失敗，process exit 使用最優先的 blocking code，並在輸出列出全部 failures。
+- `--check <name>` 只跑單一 check；不支援的 check name 回 `FEATURE_UNSUPPORTED`。
+- Phase 1 `doctor` 不自動修復，不建立缺少的檔案；修復流程由使用者明確呼叫 `init --resume`、`project add` 或重新 capture。
+
+### `agent-notes trace <id>`
+
+`trace` 用來回溯 `itemId`、`sessionId` 或 `sourceRef`。
+
+輸出需包含：
+
+- resolved target type
+- session id 與 note path
+- sourceRefs
+- provenance entries
+- 若可用，source index 中的 local pointer summary
+
+不得把 local pointer 寫入 tracked Markdown。
+
+查找順序：
+
+1. 若 id 符合 `src_` 前綴，先查 `.agent-notes/source-index.json`。
+2. 若 id 符合 session id，先查 session card frontmatter，再查 provenance log。
+3. 若 id 符合 generated item id，先查 `.agent-notes/provenance.jsonl`，再查 tracked marker blocks / session cards fallback。
+4. Phase 1 personal mode 找不到 source ref 時回 `SOURCE_NOT_FOUND`。
+5. 找不到 item 或 session 時回 `TRACE_TARGET_NOT_FOUND`。
+6. 找到 item 但缺 session、sourceRefs 或 provenance chain 時回 `PROVENANCE_ORPHAN`。
+
+輸出規則：
+
+- 預設輸出人類可讀 trace summary；`--json` 輸出 `{ target, sessions, sourceRefs, provenance, warnings }`。
+- local source path 只能顯示在 terminal output，不得由 `trace` 寫回任何 tracked Markdown。
+- 若 source index 有 `contentHash`，可顯示 hash；若 local source file 不存在，trace 仍可回 `OK` 但需加 warning `local source missing`。
+
+### `agent-notes integrate`
+
+Phase 1 只承諾 Codex integration；Claude Code 與 OpenClaw 可顯示 `coming soon`。
+
+規則：
+
+- `integrate --list` 不寫檔。
+- `integrate codex --dry-run` 顯示會修改的本機 agent config、backup path 與 hook command。
+- `integrate codex --apply` 必須先 backup，並在使用者確認或 `--yes` 後才套用。
+- hook command 必須引用穩定 binary path；偵測到 ephemeral `npx` path 時回傳 `INTEGRATION_BINARY_UNSTABLE`。
+
+## Post-MVP Commands
+
+`rollup`、`classify`、`sync`、`promote`、`publish` 不屬於 Phase 1。若使用者在 Phase 1 呼叫，CLI 應回傳 `FEATURE_UNSUPPORTED`，並顯示 roadmap 階段。

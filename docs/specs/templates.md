@@ -55,6 +55,7 @@ type: agent-session
 schemaVersion: 1
 title: "{{title}}"
 date: "{{date}}"
+capturedAt: "{{capturedAt}}"
 agent: "{{agent}}"
 tool: "{{tool}}"
 scope: "{{scope}}"
