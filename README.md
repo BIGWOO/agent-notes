@@ -89,7 +89,13 @@ agent-notes rollup --weekly
 .
 ├── README.md
 ├── docs/
-│   └── PRD.md
+│   ├── README.md
+│   ├── PRD.md
+│   ├── product/
+│   ├── specs/
+│   ├── architecture/
+│   ├── implementation/
+│   └── decisions/
 ├── .gitignore
 └── LICENSE
 ```
