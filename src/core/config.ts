@@ -21,10 +21,7 @@ export function defaultConfigPath(options: PathOptions = {}): string {
 
 export function loadConfig(options: LoadConfigOptions = {}): LocalConfig {
   const configPathInput = options.configPath ?? defaultConfigPath(options);
-  const configPath = canonicalizePath(configPathInput, {
-    ...options,
-    mustExist: true
-  });
+  const configPath = resolvePath(configPathInput, options);
 
   let parsedJson: unknown;
 

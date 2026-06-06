@@ -47,7 +47,7 @@ export function canonicalizePath(input: string, options: CanonicalPathOptions = 
 }
 
 export function isAbsolutePath(value: string): boolean {
-  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value);
+  return path.isAbsolute(value) || /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("\\\\");
 }
 
 export function isVaultRelativePath(value: string): boolean {
@@ -64,6 +64,14 @@ export function isVaultRelativePath(value: string): boolean {
   }
 
   const normalized = path.posix.normalize(value.replaceAll("\\", "/"));
+  const firstSegment = normalized.split("/")[0];
 
-  return normalized !== "." && !normalized.startsWith("../") && normalized !== "..";
+  return (
+    normalized !== "." &&
+    normalized !== ".." &&
+    !normalized.startsWith("../") &&
+    !path.posix.isAbsolute(normalized) &&
+    firstSegment !== ".agent-notes" &&
+    firstSegment !== "private"
+  );
 }

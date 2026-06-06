@@ -52,6 +52,10 @@ describe("path helpers", () => {
     expect(isVaultRelativePath("../outside")).toBe(false);
     expect(isVaultRelativePath("/tmp/Agent-Notes")).toBe(false);
     expect(isVaultRelativePath("$HOME/Agent-Notes")).toBe(false);
+    expect(isVaultRelativePath(".agent-notes/source-index.json")).toBe(false);
+    expect(isVaultRelativePath("03-Projects/../.agent-notes/source-index.json")).toBe(false);
+    expect(isVaultRelativePath("private/leak.md")).toBe(false);
+    expect(isVaultRelativePath("\\\\server\\share\\note.md")).toBe(false);
   });
 });
 
@@ -130,6 +134,21 @@ describe("local config schema and loader", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it("loadConfig 缺檔回傳 CONFIG_NOT_FOUND", () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "agent-notes-missing-config-"));
+
+    try {
+      loadConfig({
+        configPath: path.join(directory, "missing.json")
+      });
+      throw new Error("expected loadConfig to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_NOT_FOUND);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("project map schema", () => {
@@ -169,6 +188,34 @@ describe("session and provenance schemas", () => {
   it("拒絕 tracked session frontmatter 中的絕對 repoPath 欄位", async () => {
     try {
       parseSessionFrontmatter(await readJsonFixture("session/absolute-repo-path.json"));
+      throw new Error("expected parseSessionFrontmatter to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+    }
+  });
+
+  it("拒絕 unknown frontmatter string 中的本機絕對路徑", async () => {
+    const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
+
+    try {
+      parseSessionFrontmatter({
+        ...frontmatter,
+        somePath: "/Users/example/repo"
+      });
+      throw new Error("expected parseSessionFrontmatter to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);
+    }
+  });
+
+  it("拒絕 date-only capturedAt", async () => {
+    const frontmatter = (await readJsonFixture("session/valid-project-session.json")) as Record<string, unknown>;
+
+    try {
+      parseSessionFrontmatter({
+        ...frontmatter,
+        capturedAt: "2026-06-06"
+      });
       throw new Error("expected parseSessionFrontmatter to fail");
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.CONFIG_INVALID);

@@ -29,9 +29,14 @@ export const itemIdSchema = z
   .min(1)
   .regex(/^(DEC|TASK|CTX|PIT)-[0-9]{4,}$/u, "itemId 必須使用穩定前綴");
 
-export const isoDateTimeSchema = z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
-  message: "必須是可解析的 ISO datetime"
-});
+const isoDateTimePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u;
+
+export const isoDateTimeSchema = z
+  .string()
+  .regex(isoDateTimePattern, "必須是含時間與 timezone 的 ISO datetime")
+  .refine((value) => !Number.isNaN(Date.parse(value)), {
+    message: "必須是可解析的 ISO datetime"
+  });
 
 export const dateOnlySchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, "必須是 YYYY-MM-DD");
 

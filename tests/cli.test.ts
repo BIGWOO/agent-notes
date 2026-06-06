@@ -75,4 +75,11 @@ describe("agent-notes CLI scaffold", () => {
     expect(result.exitCode).toBe(exitCodeFor(ErrorCode.FEATURE_UNSUPPORTED));
     expect(result.stderr).toContain(ErrorCode.FEATURE_UNSUPPORTED);
   });
+
+  it("post-MVP command 使用 FEATURE_UNSUPPORTED 而不是 unknown command", async () => {
+    const result = await parseCli(["rollup", "--daily"]);
+
+    expect(result.exitCode).toBe(exitCodeFor(ErrorCode.FEATURE_UNSUPPORTED));
+    expect(result.stderr).toContain(ErrorCode.FEATURE_UNSUPPORTED);
+  });
 });

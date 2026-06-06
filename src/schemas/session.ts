@@ -19,6 +19,17 @@ const forbiddenTrackedFrontmatterKeys = [
   "homePath"
 ] as const;
 
+const blockedTrackedStringPatterns = [
+  /\/Users\//u,
+  /\/home\//u,
+  /^[A-Za-z]:[\\/]/u,
+  /^\\\\/u,
+  /\$HOME/u,
+  /^~\//u,
+  /\.agent-notes\//u,
+  /private\/raw-sessions\//u
+] as const;
+
 const sourceSchema = z
   .object({
     kind: z.literal("summary-file"),
@@ -69,6 +80,13 @@ export const sessionFrontmatterSchema = z
       }
     }
 
+    for (const finding of findBlockedTrackedValues(frontmatter)) {
+      context.addIssue({
+        code: "custom",
+        message: `tracked session frontmatter 含本機或私有路徑: ${finding}`
+      });
+    }
+
     if (value.scope === "project" && (value.projectId === undefined || value.repoId === undefined)) {
       context.addIssue({
         code: "custom",
@@ -88,4 +106,20 @@ export type SessionFrontmatter = z.infer<typeof sessionFrontmatterSchema>;
 
 export function parseSessionFrontmatter(value: unknown): SessionFrontmatter {
   return parseSchema(sessionFrontmatterSchema, value, ErrorCode.CONFIG_INVALID, "session frontmatter");
+}
+
+function findBlockedTrackedValues(value: unknown, path: readonly string[] = []): string[] {
+  if (typeof value === "string") {
+    return blockedTrackedStringPatterns.some((pattern) => pattern.test(value)) ? [path.join(".")] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => findBlockedTrackedValues(item, [...path, String(index)]));
+  }
+
+  if (value === null || typeof value !== "object") {
+    return [];
+  }
+
+  return Object.entries(value).flatMap(([key, item]) => findBlockedTrackedValues(item, [...path, key]));
 }

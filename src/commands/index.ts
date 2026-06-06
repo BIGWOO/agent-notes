@@ -23,6 +23,7 @@ export function registerCommands(program: Command): void {
   registerDoctorCommand(program);
   registerTraceCommand(program);
   registerIntegrateCommand(program);
+  registerPostMvpCommands(program);
 }
 
 function registerProjectCommands(program: Command): void {
@@ -123,6 +124,19 @@ function registerIntegrateCommand(program: Command): void {
     .option("--binary <path>", "指定穩定 agent-notes binary path")
     .option("--yes", "略過互動確認")
     .action(notImplemented("integrate codex"));
+}
+
+function registerPostMvpCommands(program: Command): void {
+  const plannedCommands = ["rollup", "classify", "sync", "promote", "publish"] as const;
+
+  for (const commandName of plannedCommands) {
+    program
+      .command(commandName)
+      .allowUnknownOption()
+      .allowExcessArguments()
+      .description("post-MVP command，Phase 1 尚未支援")
+      .action(notImplemented(commandName));
+  }
 }
 
 function notImplemented(commandName: string): () => never {

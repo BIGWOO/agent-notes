@@ -21,6 +21,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "lint": "eslint .",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepack": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
