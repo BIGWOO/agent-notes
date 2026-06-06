@@ -161,6 +161,17 @@ agent-notes init
 - 選定語言後，後續提示、錯誤訊息與預設模板跟著該語言產生
 - 語言設定寫入 local config，例如 `locale: "zh-TW"`
 
+`init` 的 vault 選擇規則：
+
+- 詢問使用者是否要建立新 vault、使用既有 Obsidian vault，或輸入自訂路徑
+- 建立新 vault 時，預設路徑為 `~/Documents/Agent-Notes/`
+- 建立前必須顯示完整路徑並取得確認
+- 若目標目錄已存在且非空，不能覆蓋或清空，必須改走既有 vault 檢查流程
+- 使用既有 Obsidian vault 時，不重排原本架構、不搬動既有筆記、不覆蓋同名檔案
+- 若既有 vault 缺少 Agent Notes 需要的目錄，只能以 additive setup 補上必要目錄、模板與 marker-ready context files
+- 補目錄或檔案前必須顯示 dry-run 摘要，列出會建立的路徑
+- 若偵測到同名檔案但內容非 Agent Notes 管理，必須改用替代檔名或停止並提示使用者手動處理
+
 ## 7. 資訊架構
 
 建議 vault 結構：
@@ -403,14 +414,17 @@ agent-notes-private/         private repo
 `init` 是使用者第一次執行時的主要入口。MVP 的 `init` 應聚焦在建立 local-first runtime，而不是直接接管 agent：
 
 1. 選擇語言，並依系統 locale 調整預選順序
-2. 選擇或建立 vault path
-3. 建立必要目錄
-4. 建立 `~/.config/agent-notes/config.json`
-5. 建立 public-safe sample project map
-6. 顯示 manual capture 與 context command 範例
-7. 詢問是否現在連接 AI agents，並提供可多選的 agent 清單
-8. 對使用者選取的每個 agent 顯示 dry-run 摘要與確認提示
-9. 自動執行或建議執行 `agent-notes doctor`
+2. 選擇建立新 vault、使用既有 Obsidian vault，或輸入自訂 vault path
+3. 建立新 vault 時，預設使用 `~/Documents/Agent-Notes/`
+4. 對既有 vault 執行 additive compatibility check
+5. 顯示將建立或補齊的必要目錄與檔案
+6. 使用者確認後才建立必要目錄
+7. 建立 `~/.config/agent-notes/config.json`
+8. 建立 public-safe sample project map
+9. 顯示 manual capture 與 context command 範例
+10. 詢問是否現在連接 AI agents，並提供可多選的 agent 清單
+11. 對使用者選取的每個 agent 顯示 dry-run 摘要與確認提示
+12. 自動執行或建議執行 `agent-notes doctor`
 
 Hook integration 必須是 `init` 之後的獨立步驟。這能讓非技術使用者先完成安全初始化，也讓進階使用者清楚知道何時會修改本機 agent 設定。
 
