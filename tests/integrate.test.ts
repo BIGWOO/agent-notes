@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -579,6 +579,40 @@ describe("integrate command", () => {
     } catch (error) {
       expectAgentNotesError(error, ErrorCode.BACKUP_FAILED);
       expect(readFileSync(configPath, "utf8")).toBe(before);
+      expect(existsSync(path.join(workspace.codexHome, ".agent-notes", "integrate-codex.lock"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("codex apply 拒絕 CODEX_HOME/backups symlink，避免 backup 寫到外部目錄", async () => {
+    const workspace = makeWorkspace();
+    const outsideDirectory = path.join(workspace.root, "outside-backups");
+    const configPath = writeCodexConfig(workspace, {
+      model: "gpt-test",
+      hooks: {
+        stop: []
+      }
+    });
+    const before = readFileSync(configPath, "utf8");
+
+    try {
+      mkdirSync(outsideDirectory);
+      symlinkSync(outsideDirectory, path.join(workspace.codexHome, "backups"));
+
+      await runIntegrateCodex(
+        {
+          apply: true,
+          binary: "/usr/local/bin/agent-notes",
+          yes: true
+        },
+        contextFor(workspace)
+      );
+      throw new Error("expected runIntegrateCodex to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.PATH_UNSAFE);
+      expect(readFileSync(configPath, "utf8")).toBe(before);
+      expect(existsSync(path.join(outsideDirectory, "agent-notes"))).toBe(false);
       expect(existsSync(path.join(workspace.codexHome, ".agent-notes", "integrate-codex.lock"))).toBe(false);
     } finally {
       cleanup(workspace.root);

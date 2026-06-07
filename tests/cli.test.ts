@@ -69,11 +69,11 @@ describe("agent-notes CLI scaffold", () => {
     expect(result.stdout).toContain("doctor");
   });
 
-  it("未實作 command 使用穩定錯誤碼", async () => {
+  it("已實作 command 找不到 config 時使用穩定錯誤碼", async () => {
     const result = await parseCli(["capture", "--dry-run"]);
 
-    expect(result.exitCode).toBe(exitCodeFor(ErrorCode.FEATURE_UNSUPPORTED));
-    expect(result.stderr).toContain(ErrorCode.FEATURE_UNSUPPORTED);
+    expect(result.exitCode).toBe(exitCodeFor(ErrorCode.CONFIG_NOT_FOUND));
+    expect(result.stderr).toContain(ErrorCode.CONFIG_NOT_FOUND);
   });
 
   it("post-MVP command 使用 FEATURE_UNSUPPORTED 而不是 unknown command", async () => {

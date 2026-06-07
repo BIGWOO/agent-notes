@@ -1,8 +1,12 @@
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
+import { registerCaptureCommand } from "./capture.js";
+import { registerContextCommand } from "./context.js";
+import { registerDoctorCommand } from "./doctor.js";
 import { registerInitCommand } from "./init.js";
 import { registerIntegrateCommands } from "./integrate.js";
 import { registerProjectCommands } from "./project.js";
+import { registerTraceCommand } from "./trace.js";
 
 export function registerCommands(program: Command): void {
   registerInitCommand(program);
@@ -13,47 +17,6 @@ export function registerCommands(program: Command): void {
   registerTraceCommand(program);
   registerIntegrateCommands(program);
   registerPostMvpCommands(program);
-}
-
-function registerCaptureCommand(program: Command): void {
-  program
-    .command("capture")
-    .description("依 summary file 建立 session note 與 provenance")
-    .option("--repo <path>", "repo 路徑")
-    .option("--tool <tool>", "agent tool，例如 codex")
-    .option("--scope <scope>", "寫入範圍：ignore、inbox、daily、area、personal、project")
-    .option("--summary-file <path>", "deterministic Markdown summary file")
-    .option("--visibility <visibility>", "visibility：private、team-safe、public-safe")
-    .option("--source-file <path>", "本機 source pointer，不複製 raw transcript")
-    .option("--dry-run", "只顯示 write plan，不寫入檔案")
-    .action(notImplemented("capture"));
-}
-
-function registerContextCommand(program: Command): void {
-  program
-    .command("context")
-    .description("輸出 bounded project context packet")
-    .option("--repo <path>", "repo 路徑")
-    .option("--max-chars <count>", "輸出字元上限")
-    .action(notImplemented("context"));
-}
-
-function registerDoctorCommand(program: Command): void {
-  program
-    .command("doctor")
-    .description("檢查 config、vault、project map、provenance 與 public-safe 風險")
-    .option("--check <name>", "只執行指定檢查")
-    .option("--json", "輸出 JSON")
-    .action(notImplemented("doctor"));
-}
-
-function registerTraceCommand(program: Command): void {
-  program
-    .command("trace")
-    .description("追溯 itemId、sessionId 或 sourceRef")
-    .argument("<id>", "itemId、sessionId 或 sourceRef")
-    .option("--json", "輸出 JSON")
-    .action(notImplemented("trace"));
 }
 
 function registerPostMvpCommands(program: Command): void {

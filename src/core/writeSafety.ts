@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants, existsSync, readFileSync } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AgentNotesError, ErrorCode } from "./errors.js";
 
@@ -159,6 +159,9 @@ export async function executeWriteBatch(options: ExecuteWriteBatchOptions): Prom
     };
   }
 
+  await assertNoSymlinkInExistingPath(options.lockFilePath, "write lock");
+  await assertNoSymlinkInExistingPath(options.backupRootPath, "backup root");
+
   let lockHandle: LockHandle | undefined;
   let lockAcquired = false;
   const written: PreparedFileWrite[] = [];
@@ -278,6 +281,49 @@ function validateOperationId(operationId: string): string {
   }
 
   return operationId;
+}
+
+async function assertNoSymlinkInExistingPath(targetPath: string, label: string): Promise<void> {
+  const resolved = path.resolve(targetPath);
+  const parsed = path.parse(resolved);
+  const relativeSegments = resolved.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  const startIndex = managedSupportSegmentIndex(relativeSegments);
+
+  if (startIndex === -1) {
+    return;
+  }
+
+  let currentPath = path.join(parsed.root, ...relativeSegments.slice(0, startIndex));
+
+  for (const segment of relativeSegments.slice(startIndex)) {
+    currentPath = path.join(currentPath, segment);
+
+    try {
+      const currentStat = await lstat(currentPath);
+
+      if (currentStat.isSymbolicLink()) {
+        throw new AgentNotesError(ErrorCode.PATH_UNSAFE, `${label} path 不可包含 symlink`);
+      }
+    } catch (error) {
+      if (error instanceof AgentNotesError) {
+        throw error;
+      }
+
+      if (isMissingPathError(error)) {
+        return;
+      }
+
+      throw error;
+    }
+  }
+}
+
+function managedSupportSegmentIndex(segments: readonly string[]): number {
+  const managedIndexes = segments
+    .map((segment, index) => (segment === ".agent-notes" || segment === "agent-notes" || segment === "backups" ? index : -1))
+    .filter((index) => index !== -1);
+
+  return managedIndexes.length === 0 ? -1 : Math.min(...managedIndexes);
 }
 
 async function acquireLock(lockFilePath: string, operationId: string, command: string): Promise<LockHandle> {
@@ -502,6 +548,10 @@ function safeWriteLabel(write: FileWriteInput): string {
 
 function isFileExistsError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
 
 function messageFor(error: unknown): string {
