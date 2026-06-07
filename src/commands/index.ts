@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
 import { registerInitCommand } from "./init.js";
+import { registerIntegrateCommands } from "./integrate.js";
 import { registerProjectCommands } from "./project.js";
 
 export function registerCommands(program: Command): void {
@@ -10,7 +11,7 @@ export function registerCommands(program: Command): void {
   registerContextCommand(program);
   registerDoctorCommand(program);
   registerTraceCommand(program);
-  registerIntegrateCommand(program);
+  registerIntegrateCommands(program);
   registerPostMvpCommands(program);
 }
 
@@ -53,36 +54,6 @@ function registerTraceCommand(program: Command): void {
     .argument("<id>", "itemId、sessionId 或 sourceRef")
     .option("--json", "輸出 JSON")
     .action(notImplemented("trace"));
-}
-
-function registerIntegrateCommand(program: Command): void {
-  const integrate = program.command("integrate").description("檢查或設定 agent integration");
-
-  integrate
-    .option("--list", "列出 integration 支援狀態")
-    .action((options: { readonly list?: boolean }) => {
-      if (options.list === true) {
-        process.stdout.write(
-          [
-            "codex: planned for Phase 1 dry-run/apply",
-            "claude-code: coming soon",
-            "openclaw: coming soon"
-          ].join("\n") + "\n"
-        );
-        return;
-      }
-
-      integrate.outputHelp();
-    });
-
-  integrate
-    .command("codex")
-    .description("檢查或套用 Codex hook integration")
-    .option("--dry-run", "顯示 planned patch，不寫入檔案")
-    .option("--apply", "套用 Codex integration")
-    .option("--binary <path>", "指定穩定 agent-notes binary path")
-    .option("--yes", "略過互動確認")
-    .action(notImplemented("integrate codex"));
 }
 
 function registerPostMvpCommands(program: Command): void {
