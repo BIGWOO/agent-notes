@@ -1,7 +1,7 @@
 # Marker Block 規格
 
 Status: draft
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 Source: 從 `docs/PRD.md` 拆分整理
 
 本檔定義 marker block updater 的 idempotent 更新策略與人工筆記保護規則。
@@ -60,10 +60,10 @@ Phase 1 必要 block：
 
 | File | Block ID | Source Section | Item Prefix |
 | --- | --- | --- | --- |
-| `03-context/active-tasks.md` | `active-tasks` | `Next Steps` | `TASK` |
-| `03-context/decision-log.md` | `decision-log` | `Decisions` | `DEC` |
-| `03-context/pitfalls.md` | `pitfalls` | optional future input | `PIT` |
-| `03-context/README.md` | `project-summary` | `Summary` | `CTX` |
+| `<project notePath>/active-tasks.md` | `active-tasks` | `Next Steps` | `TASK` |
+| `<project notePath>/decision-log.md` | `decision-log` | `Decisions` | `DEC` |
+| `<project notePath>/pitfalls.md` | `pitfalls` | optional future input | `PIT` |
+| `<project notePath>/README.md` | `project-summary` | `Summary` | `CTX` |
 
 ## Update Algorithm
 

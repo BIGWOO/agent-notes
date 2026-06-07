@@ -1,7 +1,7 @@
 # Validation Plan
 
 Status: draft
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 Source: 從 `docs/PRD.md` 拆分整理
 
 本檔追蹤測試策略、驗收條件與 manual verification checklist。
@@ -29,6 +29,16 @@ Source: 從 `docs/PRD.md` 拆分整理
 - integration 測試：ephemeral `npx` binary path 不允許 apply hook，多選 partial failure 不破壞已成功項目
 - scenario matrix 檢查：Phase 1 情境都有對應 source spec 與 expected behavior
 
+## Current Automated Evidence
+
+2026-06-07 Phase 1 收尾已覆蓋：
+
+- `npm test`：8 files / 141 tests passed
+- `npm run typecheck`
+- `npm run lint`
+- `tests/capture-context-trace-doctor.test.ts` 覆蓋 capture dry-run、project/inbox routing、summary parser、public-safe gate、raw unsupported、marker idempotency、context packet、trace item 與 doctor checks
+- `tests/integrate.test.ts` 覆蓋 `integrate --list`、Codex dry-run/apply、unstable binary、backup failure 與 unsupported config manual instructions
+- `tests/writeSafety.test.ts` 覆蓋 dry-run 無副作用、lock conflict、backup failure、hash conflict、rollback 與 public-safe planned write scan
 
 ## Manual Verification Checklist
 

@@ -1,7 +1,7 @@
 # 使用情境模擬矩陣
 
 Status: draft
-Last Updated: 2026-06-06
+Last Updated: 2026-06-07
 Source: Phase 1 planning validation
 
 本檔用來反覆模擬使用者與 agent 的實際操作，檢查規格是否覆蓋常見路徑、錯誤路徑與容易混淆的 onboarding 卡點。每次補規格或實作後，都應回到本矩陣檢查是否需要新增案例。
@@ -115,7 +115,7 @@ Source: Phase 1 planning validation
 
 ## Coverage Gaps To Watch
 
-- Codex hook 真實 config path 仍需在實作前用 dry-run fixture 定義，不應猜所有版本路徑都相同。
+- Codex hook Phase 1 採 fixture-driven JSON adapter；真實新版 config 若 shape 不明，必須回 `INTEGRATION_UNSUPPORTED` 並顯示 manual instructions，不猜所有版本路徑都相同。
 - `doctor` public-safe 掃描只能做 heuristic，不應宣稱能證明完全無敏感資訊。
 - raw transcript copy 移到 post-MVP；Phase 1 只保存 summary-file pointer。
 - Team Vault 不應在 Phase 1 實作 partial write，以免行為與 sharing 規劃衝突。
