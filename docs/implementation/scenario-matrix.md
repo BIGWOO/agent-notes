@@ -89,12 +89,14 @@ Source: Phase 1 planning validation
 
 | ID | Scenario | Command / Steps | Exit Code | Files Written | Must Not Write | Assertions | Source Spec |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| S-INT-001 | list 不需 Agent Notes config | `agent-notes integrate --list` before init | `OK` | none | local config、hook config | Codex 可偵測狀態可讀；Claude/OpenClaw coming soon | [`integrations.md`](../specs/integrations.md) |
+| S-INT-001 | list 不需 Agent Notes config | `agent-notes integrate --list` before init | `OK` | none | local config、hook config | Codex 可偵測狀態可讀；Claude Code dry-run-only；OpenClaw coming soon | [`integrations.md`](../specs/integrations.md) |
 | S-INT-002 | Codex dry-run recognized config | `agent-notes integrate codex --dry-run --binary <stable>` | `OK` | none | hook config | 顯示 planned patch、backup path、hook command | [`integrations.md`](../specs/integrations.md) |
 | S-INT-003 | Codex dry-run unknown config shape | `agent-notes integrate codex --dry-run` with unrecognized fixture | `INTEGRATION_UNSUPPORTED` | none | hook config | 顯示 manual instructions，不假裝成功 | [`integrations.md`](../specs/integrations.md) |
 | S-INT-004 | init 多選 integrations | 選 Codex + Claude Code，Codex dry-run confirmed | `OK` | Codex config only after confirmation | Claude config if unsupported | Codex 可 apply；Claude coming soon 不阻塞，輸出每個 agent 的結果摘要 | [`integrations.md`](../specs/integrations.md) |
 | S-INT-005 | npx ephemeral path | `integrate codex --apply` with ephemeral binary | `INTEGRATION_BINARY_UNSTABLE` | none | hook config | 要求 global install 或 stable binary | [`cli.md`](../specs/cli.md) |
 | S-INT-006 | apply 失敗 | Codex config backup 成功但 patch 寫入失敗 | `INTEGRATION_APPLY_FAILED` | backup file only | broken config | 保留 recovery instructions | [`integrations.md`](../specs/integrations.md) |
+| S-INT-007 | Claude Code dry-run skeleton | `agent-notes integrate claude-code --dry-run` | `OK` | none | hook config、lock、backup | 顯示 hook command template、候選 config summary 與 hints；不輸出本機絕對路徑 | [`integrations.md`](../specs/integrations.md) |
+| S-INT-008 | Claude Code apply 未支援 | `agent-notes integrate claude-code --apply --yes --binary <stable>` | `INTEGRATION_UNSUPPORTED` | none | hook config、backup | 真實 schema 未 fixture-driven 驗證前不寫入 | [`integrations.md`](../specs/integrations.md) |
 
 ## Write Safety
 
@@ -116,6 +118,7 @@ Source: Phase 1 planning validation
 ## Coverage Gaps To Watch
 
 - Codex hook Phase 1 採 fixture-driven JSON adapter；真實新版 config 若 shape 不明，必須回 `INTEGRATION_UNSUPPORTED` 並顯示 manual instructions，不猜所有版本路徑都相同。
+- Claude Code Phase 2 前段只提供 dry-run skeleton；apply 必須等真實 config shape、backup/rollback tests 與 review 完成。
 - `doctor` public-safe 掃描只能做 heuristic，不應宣稱能證明完全無敏感資訊。
 - raw transcript copy 移到 post-MVP；Phase 1 只保存 summary-file pointer。
 - Team Vault 不應在 Phase 1 實作 partial write，以免行為與 sharing 規劃衝突。

@@ -24,6 +24,18 @@ Source: [`phase-1-plan.md`](phase-1-plan.md) 與 `docs/specs/`
 | P1-012 | Scenario Coverage | done | [`scenario-matrix.md`](scenario-matrix.md) | Phase 1 情境都有 command、expected behavior 與 source spec | Scenario matrix 已覆蓋 init、project/capture/context、doctor、trace、marker/provenance、integration、write-safety 與 post-MVP boundary；已依 P1-010/P1-005~P1-009 更新 coverage notes |
 | P1-013 | Write Safety | done | [`../specs/write-safety.md`](../specs/write-safety.md) | 寫檔 command 共用 write plan、lock、backup、atomic write 與 rollback fixtures | 已實作共用 write plan、public-safe gate、lock、backup、atomic write、rollback 與 dry-run 無副作用；fixture tests 覆蓋 lock conflict、hash conflict、backup collision/traversal、temp cleanup、public-safe block 與 rollback；驗證：`npm test`、`npm run build`、`npm run typecheck`、`npm run lint`、`npm run pack:dry-run` |
 
+## Phase 2 Progress
+
+| ID | Workstream | Status | Source Spec | Acceptance Criteria | Notes |
+| --- | --- | --- | --- | --- | --- |
+| P2-001 | Phase 2 planning / boundaries | done | [`phase-2-plan.md`](phase-2-plan.md)、[`../product/roadmap.md`](../product/roadmap.md) | Phase 2 workstreams、dry-run-first 邊界與 apply gate 已文件化 | Phase 2 起點是 Agent Hooks；不重寫 Phase 1 文件；apply 需後續 fixture、backup/rollback tests 與 review |
+| P2-002 | Shared integration adapter abstractions | done | [`../specs/integrations.md`](../specs/integrations.md) | Codex behavior 不回歸，Claude/OpenClaw 可共用 status/dry-run 結構 | 已新增共用 integration 型別、status、dry-run result、stable binary helper 與安全 config summary；codex review 發現 isolated env fallback 風險後已修正並補測；驗證：`npm test`、`npm run typecheck`、`npm run lint`、`npm run build` |
+| P2-003 | Claude Code hook dry-run | done | [`../specs/integrations.md`](../specs/integrations.md) | `integrate claude-code --dry-run` 不寫檔，apply 回 `INTEGRATION_UNSUPPORTED` | 已新增 Claude Code dry-run skeleton、候選 config 摘要與 recovery hints；真實 config shape 未確認前不 apply；init preview 只新增 dry-run next command，不 apply；驗證：`npm test`、`npm run typecheck`、`npm run lint`、`npm run build` |
+| P2-004 | OpenClaw workflow dry-run | planned | [`../specs/integrations.md`](../specs/integrations.md) | `integrate openclaw --dry-run` 不寫檔，未知 workflow shape 有 hints | 不寫死私有 plugin path 或公司內部 workflow |
+| P2-005 | Apply safety / backup / rollback tests | planned | [`../specs/write-safety.md`](../specs/write-safety.md) | apply 前 backup failure、hash conflict、rollback 與 symlink 防護有 tests | Codex 既有 apply safety 可作為基準；其他 adapter apply 開放前必補 |
+| P2-006 | Agent config path detection and recovery hints | planned | [`../specs/integrations.md`](../specs/integrations.md) | 偵測摘要不洩漏本機絕對路徑，找不到 config 時提供下一步 | dry-run output 使用 basename、用途、短 hash 或 redacted summary |
+| P2-007 | Validation / scenario matrix update | planned | [`scenario-matrix.md`](scenario-matrix.md)、[`validation.md`](validation.md) | Phase 2 dry-run、unsupported apply、path detection 與 no-write cases 有情境覆蓋 | P2-002/P2-003 後更新 scenario matrix |
+
 ## Milestone Rules
 
 - 每個 workstream 開始前，先確認對應 spec 沒有 blocker open question。

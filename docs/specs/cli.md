@@ -38,6 +38,15 @@ Phase 1 所有 command 需遵守同一組基本行為：
 | `integrate codex --dry-run` | none | `--binary` | none | `INTEGRATION_NOT_FOUND`、`INTEGRATION_BINARY_UNSTABLE` |
 | `integrate codex --apply` | none | `--binary`、`--yes` | Codex local hook config backup + patch | `INTEGRATION_APPLY_FAILED`、`INTEGRATION_BINARY_UNSTABLE` |
 
+## Phase 2 Agent Hook Commands
+
+Phase 2 前段新增 dry-run skeleton。除 Codex 已有 fixture-driven apply 外，其他 agent 先不寫入設定。
+
+| Command | Required | Optional | Writes | Main Errors |
+| --- | --- | --- | --- | --- |
+| `integrate claude-code --dry-run` | none | `--binary` | none | `INTEGRATION_BINARY_UNSTABLE` |
+| `integrate claude-code --apply` | none | `--binary`、`--yes` | none | `INTEGRATION_UNSUPPORTED` |
+
 ## Command Details
 
 ### `agent-notes init`
@@ -199,13 +208,15 @@ Phase 1 checks：
 
 ### `agent-notes integrate`
 
-Phase 1 只承諾 Codex integration；Claude Code 與 OpenClaw 可顯示 `coming soon`。
+Phase 1 只承諾 Codex integration。Phase 2 前段開始提供 Claude Code dry-run skeleton；OpenClaw 仍可顯示 `coming soon`。
 
 規則：
 
 - `integrate --list` 不寫檔。
 - `integrate codex --dry-run` 顯示會修改的本機 agent config、backup path 與 hook command。
 - `integrate codex --apply` 必須先 backup，並在使用者確認或 `--yes` 後才套用。
+- `integrate claude-code --dry-run` 只顯示 hook command template、候選 config 摘要與 recovery hints，不寫檔。
+- `integrate claude-code --apply` 在真實 config shape、backup、rollback tests 與 review 完成前回 `INTEGRATION_UNSUPPORTED`。
 - hook command 必須引用穩定 binary path；偵測到 ephemeral `npx` path 時回傳 `INTEGRATION_BINARY_UNSTABLE`。
 
 ## Post-MVP Commands
