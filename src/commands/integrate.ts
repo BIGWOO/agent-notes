@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
 import {
-  firstExistingConfigSummary,
+  detectConfigCandidates,
   localFileSummary,
   stableBinaryFor,
   type IntegrationContext,
@@ -47,6 +47,7 @@ export interface IntegrateCodexResult {
 }
 
 export type IntegrateClaudeCodeResult = IntegrationDryRunResult;
+export type IntegrateOpenClawResult = IntegrationDryRunResult;
 
 interface RecognizedCodexConfig {
   readonly config: Record<string, unknown>;
@@ -56,6 +57,7 @@ interface RecognizedCodexConfig {
 const codexConfigFileName = "config.json";
 const codexHookCommandTemplate = 'capture --tool codex --scope inbox --summary-file "$AGENT_NOTES_SUMMARY_FILE"';
 const claudeCodeHookCommandTemplate = 'capture --tool claude-code --scope inbox --summary-file "$AGENT_NOTES_SUMMARY_FILE"';
+const openClawHookCommandTemplate = 'capture --tool openclaw --scope inbox --summary-file "$AGENT_NOTES_SUMMARY_FILE"';
 
 export function registerIntegrateCommands(program: Command): void {
   const integrate = program.command("integrate").description("檢查或設定 agent integration");
@@ -92,6 +94,17 @@ export function registerIntegrateCommands(program: Command): void {
     .action(async (options: IntegrateAgentOptions) => {
       await runIntegrateClaudeCodeCommand(options);
     });
+
+  integrate
+    .command("openclaw")
+    .description("預覽 OpenClaw workflow integration")
+    .option("--dry-run", "顯示 workflow template 與偵測摘要，不寫入檔案")
+    .option("--apply", "套用 OpenClaw integration（Phase 2 尚未支援）")
+    .option("--binary <path>", "指定穩定 agent-notes binary path")
+    .option("--yes", "保留給未來 apply 流程")
+    .action(async (options: IntegrateAgentOptions) => {
+      await runIntegrateOpenClawCommand(options);
+    });
 }
 
 export function runIntegrateListCommand(context: IntegrationContext = {}): IntegrateListResult {
@@ -108,11 +121,7 @@ export function runIntegrateList(context: IntegrationContext = {}): IntegrateLis
     integrations: [
       codexStatus(context),
       claudeCodeStatus(),
-      {
-        agent: "openclaw",
-        status: "coming-soon",
-        message: "coming soon"
-      }
+      openClawStatus()
     ]
   };
 }
@@ -181,7 +190,9 @@ export async function runIntegrateCodex(
       : await executeWriteBatch({
           batch,
           lockFilePath: path.join(codexHomePath, ".agent-notes", "integrate-codex.lock"),
-          backupRootPath
+          backupRootPath,
+          ...(context.beforeApply === undefined ? {} : { beforeApply: context.beforeApply }),
+          ...(context.afterApply === undefined ? {} : { afterApply: context.afterApply })
         });
 
   return {
@@ -221,7 +232,7 @@ export async function runIntegrateClaudeCode(
 
   const stableBinary = stableBinaryFor(options.binary, "dry-run");
   const hookCommand = `${stableBinary} ${claudeCodeHookCommandTemplate}`;
-  const detectionSummary = firstExistingConfigSummary({
+  const detection = detectConfigCandidates({
     context,
     envRootName: "CLAUDE_HOME",
     fallbackRoot: "~/.claude",
@@ -231,7 +242,8 @@ export async function runIntegrateClaudeCode(
   return {
     agent: "claude-code",
     mode: "dry-run",
-    detectionSummary,
+    checkedConfigCandidates: detection.checkedConfigCandidates,
+    detectionSummary: detection.detectedSummary,
     hookCommand,
     stableBinary,
     filesToModify: 0,
@@ -239,7 +251,59 @@ export async function runIntegrateClaudeCode(
     hints: [
       "Claude Code hook schema 尚未 fixture-driven 驗證，Phase 2 只提供 dry-run preview",
       "apply 需等 config shape、backup、rollback tests 與 code review 完成後才開放",
+      `config root source: ${detection.rootSource}`,
       "若本機設定路徑不同，請先用文件或 fixture 補上偵測規則"
+    ]
+  };
+}
+
+export async function runIntegrateOpenClawCommand(
+  options: IntegrateAgentOptions,
+  context: IntegrationContext = {}
+): Promise<IntegrateOpenClawResult> {
+  const output = context.stdout ?? ((value: string) => process.stdout.write(value));
+  const result = await runIntegrateOpenClaw(options, context);
+
+  output(formatIntegrationDryRunResult(result));
+
+  return result;
+}
+
+export async function runIntegrateOpenClaw(
+  options: IntegrateAgentOptions,
+  context: IntegrationContext = {}
+): Promise<IntegrateOpenClawResult> {
+  if (options.dryRun === true && options.apply === true) {
+    throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "integrate openclaw 不能同時使用 --dry-run 與 --apply");
+  }
+
+  if (options.apply === true) {
+    throw new AgentNotesError(ErrorCode.INTEGRATION_UNSUPPORTED, "OpenClaw apply 尚未支援；Phase 2 先提供 dry-run skeleton");
+  }
+
+  const stableBinary = stableBinaryFor(options.binary, "dry-run");
+  const hookCommand = `${stableBinary} ${openClawHookCommandTemplate}`;
+  const detection = detectConfigCandidates({
+    context,
+    envRootName: "OPENCLAW_HOME",
+    fallbackRoot: "~/.openclaw",
+    fileNames: ["config.json", "openclaw.json", "workflows.json"]
+  });
+
+  return {
+    agent: "openclaw",
+    mode: "dry-run",
+    checkedConfigCandidates: detection.checkedConfigCandidates,
+    detectionSummary: detection.detectedSummary,
+    hookCommand,
+    stableBinary,
+    filesToModify: 0,
+    filesToBackup: 0,
+    hints: [
+      "OpenClaw workflow schema 尚未 fixture-driven 驗證，Phase 2 只提供 dry-run preview",
+      "apply 需等 workflow/config shape、backup、rollback tests 與 code review 完成後才開放",
+      `config root source: ${detection.rootSource}`,
+      "若本機 workflow 路徑不同，請先用公開 fixture 補上偵測規則"
     ]
   };
 }
@@ -273,6 +337,14 @@ function codexStatus(context: IntegrationContext): IntegrationStatus {
 function claudeCodeStatus(): IntegrationStatus {
   return {
     agent: "claude-code",
+    status: "dry-run-only",
+    message: "dry-run skeleton available; apply unsupported"
+  };
+}
+
+function openClawStatus(): IntegrationStatus {
+  return {
+    agent: "openclaw",
     status: "dry-run-only",
     message: "dry-run skeleton available; apply unsupported"
   };
@@ -341,8 +413,8 @@ function formatIntegrateCodexResult(result: IntegrateCodexResult): string {
   const lines = [
     `codex: ${result.mode}`,
     `config: ${result.configSummary}`,
-    `binary: ${result.stableBinary}`,
-    `hookCommand: ${result.hookCommand}`,
+    `binary: ${safeBinarySummary(result.stableBinary)}`,
+    `hookCommand: ${safeHookCommandPreview(result.hookCommand, result.stableBinary)}`,
     `filesToModify: ${result.batch.plan.filesToModify.length}`,
     `filesToBackup: ${result.batch.plan.rollbackPlan.modified.length}`,
     `backupRoot: ${result.backupRootSummary}`,
@@ -357,8 +429,9 @@ function formatIntegrationDryRunResult(result: IntegrationDryRunResult): string 
   const lines = [
     `${result.agent}: ${result.mode}`,
     `detectedConfig: ${result.detectionSummary}`,
-    `binary: ${result.stableBinary}`,
-    `hookCommand: ${result.hookCommand}`,
+    `checkedConfigCandidates: ${result.checkedConfigCandidates.join(",")}`,
+    `binary: ${safeBinarySummary(result.stableBinary)}`,
+    `hookCommand: ${safeHookCommandPreview(result.hookCommand, result.stableBinary)}`,
     `filesToModify: ${result.filesToModify}`,
     `filesToBackup: ${result.filesToBackup}`,
     "no files written",
@@ -373,10 +446,22 @@ function formatCodexManualInstructions(stableBinary: string): string {
     "codex: unsupported",
     "manualInstructions:",
     "1. inspect Codex config shape before editing",
-    `2. add an equivalent stop hook only if your Codex version supports it: ${stableBinary} ${codexHookCommandTemplate}`,
+    `2. add an equivalent stop hook only if your Codex version supports it: ${safeBinarySummary(stableBinary)} ${codexHookCommandTemplate}`,
     "3. keep a backup of the original config before any manual change",
     "no files written"
   ].join("\n").concat("\n");
+}
+
+function safeBinarySummary(binary: string): string {
+  return path.isAbsolute(binary) ? localFileSummary(binary) : binary;
+}
+
+function safeHookCommandPreview(hookCommand: string, stableBinary: string): string {
+  const binarySummary = safeBinarySummary(stableBinary);
+
+  return hookCommand === stableBinary || !hookCommand.startsWith(`${stableBinary} `)
+    ? hookCommand.replace(stableBinary, binarySummary)
+    : `${binarySummary}${hookCommand.slice(stableBinary.length)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

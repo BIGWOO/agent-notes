@@ -441,6 +441,7 @@ describe("init command", () => {
       expect(output).toContain("integrations: preview codex");
       expect(output).toContain("integrationNext: agent-notes integrate --list");
       expect(output).toContain("integrationNext: agent-notes integrate claude-code --dry-run");
+      expect(output).toContain("integrationNext: agent-notes integrate openclaw --dry-run");
       expect(output).not.toContain(workspace.home);
       expect(existsSync(workspace.vaultPath)).toBe(false);
       expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
@@ -530,7 +531,8 @@ describe("init command", () => {
       expect(result.integrations?.status).toBe("deferred");
       expect(result.integrations?.nextCommands).toEqual([
         "agent-notes integrate --list",
-        "agent-notes integrate claude-code --dry-run"
+        "agent-notes integrate claude-code --dry-run",
+        "agent-notes integrate openclaw --dry-run"
       ]);
       expect(result.result.written.length).toBeGreaterThan(0);
       expect(existsSync(path.join(workspace.configHome, "agent-notes", "init-state.json"))).toBe(false);
@@ -575,6 +577,7 @@ describe("init command", () => {
       expect(result.integrations?.selectedAgents).toEqual(["codex"]);
       expect(output).toContain("integrationNext: agent-notes integrate --list");
       expect(output).toContain("integrationNext: agent-notes integrate claude-code --dry-run");
+      expect(output).toContain("integrationNext: agent-notes integrate openclaw --dry-run");
       expect(output).not.toContain(".codex");
       expect(existsSync(path.join(workspace.home, ".codex"))).toBe(false);
     } finally {

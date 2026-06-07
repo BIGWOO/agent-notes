@@ -15,12 +15,15 @@ export interface IntegrationStatus {
 }
 
 export interface IntegrationContext extends PathOptions {
+  readonly afterApply?: () => Promise<void> | void;
+  readonly beforeApply?: () => Promise<void> | void;
   readonly operationId?: string;
   readonly stdout?: (value: string) => void;
 }
 
 export interface IntegrationDryRunResult {
   readonly agent: IntegrationAgent;
+  readonly checkedConfigCandidates: readonly string[];
   readonly mode: "dry-run";
   readonly detectionSummary: string;
   readonly hookCommand: string;
@@ -28,6 +31,12 @@ export interface IntegrationDryRunResult {
   readonly filesToModify: number;
   readonly filesToBackup: number;
   readonly hints: readonly string[];
+}
+
+export interface ConfigCandidateDetection {
+  readonly checkedConfigCandidates: readonly string[];
+  readonly detectedSummary: string;
+  readonly rootSource: string;
 }
 
 export function stableBinaryFor(binaryInput: string | undefined, mode: IntegrationMode): string {
@@ -62,19 +71,38 @@ export function firstExistingConfigSummary(input: {
   readonly fallbackRoot: string;
   readonly fileNames: readonly string[];
 }): string {
+  return detectConfigCandidates(input).detectedSummary;
+}
+
+export function detectConfigCandidates(input: {
+  readonly context: PathOptions;
+  readonly envRootName: string;
+  readonly fallbackRoot: string;
+  readonly fileNames: readonly string[];
+}): ConfigCandidateDetection {
   const env = input.context.env ?? process.env;
   const configuredRoot = env[input.envRootName]?.trim();
-  const root = resolvePath(configuredRoot === undefined || configuredRoot === "" ? input.fallbackRoot : configuredRoot, input.context);
+  const hasConfiguredRoot = configuredRoot !== undefined && configuredRoot !== "";
+  const root = resolvePath(hasConfiguredRoot ? configuredRoot : input.fallbackRoot, input.context);
+  const checkedConfigCandidates = input.fileNames.map((fileName) => path.basename(fileName));
 
   for (const fileName of input.fileNames) {
     const candidatePath = path.join(root, fileName);
 
     if (existsSync(candidatePath)) {
-      return localFileSummary(candidatePath);
+      return {
+        checkedConfigCandidates,
+        detectedSummary: localFileSummary(candidatePath),
+        rootSource: hasConfiguredRoot ? input.envRootName : "fallback"
+      };
     }
   }
 
-  return "not detected";
+  return {
+    checkedConfigCandidates,
+    detectedSummary: "not detected",
+    rootSource: hasConfiguredRoot ? input.envRootName : "fallback"
+  };
 }
 
 function isEphemeralBinary(binary: string): boolean {
