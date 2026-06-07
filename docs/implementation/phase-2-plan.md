@@ -21,10 +21,10 @@ Phase 2 聚焦 Agent Hooks。此階段先建立可驗證、可回復、可漸進
 | P2-001 | Phase 2 planning / boundaries | done | 補 Phase 2 plan、progress、dry-run-first 與 apply gate | 文件明確列出 workstreams、風險邊界與驗證策略 |
 | P2-002 | Shared integration adapter abstractions | done | 抽出共用 adapter 型別、status、dry-run hint 與 stable binary helper | Codex 既有行為不回歸；Claude/OpenClaw 可共用 status/dry-run format |
 | P2-003 | Claude Code hook dry-run | done | 建立 Claude Code dry-run skeleton，不做 apply | `integrate claude-code --dry-run` 不寫檔；apply 回 `INTEGRATION_UNSUPPORTED` |
-| P2-004 | OpenClaw workflow dry-run | planned | 建立 OpenClaw workflow dry-run skeleton，不做 apply | `integrate openclaw --dry-run` 不寫檔；未知 workflow shape 有 hints |
-| P2-005 | Apply safety / backup / rollback tests | planned | 擴充 integration apply safety 測試矩陣 | apply 前 backup failure、hash conflict、rollback 與 symlink 防護都有 fixture tests |
-| P2-006 | Agent config path detection and recovery hints | planned | 保守偵測候選 config path，輸出不含本機絕對路徑的 recovery hints | dry-run 輸出只顯示 basename、用途、短 hash 或 redacted summary |
-| P2-007 | Validation / scenario matrix update | planned | 更新 scenario matrix 與 validation checklist | Phase 2 dry-run、unsupported apply、path detection 與 no-write cases 有情境覆蓋 |
+| P2-004 | OpenClaw workflow dry-run | done | 建立 OpenClaw workflow dry-run skeleton，不做 apply | `integrate openclaw --dry-run` 不寫檔；未知 workflow shape 有 hints |
+| P2-005 | Apply safety / backup / rollback tests | done | 擴充 integration apply safety 測試矩陣 | apply 前 backup failure、hash conflict、rollback 與 symlink 防護都有 fixture tests |
+| P2-006 | Agent config path detection and recovery hints | done | 保守偵測候選 config path，輸出不含本機絕對路徑的 recovery hints | dry-run 輸出只顯示 basename、用途、短 hash 或 redacted summary |
+| P2-007 | Validation / scenario matrix update | done | 更新 scenario matrix 與 validation checklist | Phase 2 dry-run、unsupported apply、path detection 與 no-write cases 有情境覆蓋 |
 
 ## Adapter Shape 初稿
 
