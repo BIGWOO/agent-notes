@@ -1,9 +1,16 @@
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Command } from "commander";
 import { AgentNotesError, ErrorCode } from "../core/errors.js";
-import { resolvePath, type PathOptions } from "../core/paths.js";
+import {
+  firstExistingConfigSummary,
+  localFileSummary,
+  stableBinaryFor,
+  type IntegrationContext,
+  type IntegrationDryRunResult,
+  type IntegrationStatus
+} from "../core/integrationAdapters.js";
+import { resolvePath } from "../core/paths.js";
 import {
   createOperationId,
   executeWriteBatch,
@@ -23,16 +30,7 @@ interface IntegrateCodexOptions {
   readonly yes?: boolean;
 }
 
-export interface IntegrateContext extends PathOptions {
-  readonly operationId?: string;
-  readonly stdout?: (value: string) => void;
-}
-
-export interface IntegrationStatus {
-  readonly agent: "codex" | "claude-code" | "openclaw";
-  readonly status: "supported" | "not-found" | "unsupported" | "coming-soon";
-  readonly message: string;
-}
+type IntegrateAgentOptions = IntegrateCodexOptions;
 
 export interface IntegrateListResult {
   readonly integrations: readonly IntegrationStatus[];
@@ -48,6 +46,8 @@ export interface IntegrateCodexResult {
   readonly backupRootSummary: string;
 }
 
+export type IntegrateClaudeCodeResult = IntegrationDryRunResult;
+
 interface RecognizedCodexConfig {
   readonly config: Record<string, unknown>;
   readonly configPath: string;
@@ -55,6 +55,7 @@ interface RecognizedCodexConfig {
 
 const codexConfigFileName = "config.json";
 const codexHookCommandTemplate = 'capture --tool codex --scope inbox --summary-file "$AGENT_NOTES_SUMMARY_FILE"';
+const claudeCodeHookCommandTemplate = 'capture --tool claude-code --scope inbox --summary-file "$AGENT_NOTES_SUMMARY_FILE"';
 
 export function registerIntegrateCommands(program: Command): void {
   const integrate = program.command("integrate").description("檢查或設定 agent integration");
@@ -80,9 +81,20 @@ export function registerIntegrateCommands(program: Command): void {
     .action(async (options: IntegrateCodexOptions) => {
       await runIntegrateCodexCommand(options);
     });
+
+  integrate
+    .command("claude-code")
+    .description("預覽 Claude Code hook integration")
+    .option("--dry-run", "顯示 hook template 與偵測摘要，不寫入檔案")
+    .option("--apply", "套用 Claude Code integration（Phase 2 尚未支援）")
+    .option("--binary <path>", "指定穩定 agent-notes binary path")
+    .option("--yes", "保留給未來 apply 流程")
+    .action(async (options: IntegrateAgentOptions) => {
+      await runIntegrateClaudeCodeCommand(options);
+    });
 }
 
-export function runIntegrateListCommand(context: IntegrateContext = {}): IntegrateListResult {
+export function runIntegrateListCommand(context: IntegrationContext = {}): IntegrateListResult {
   const result = runIntegrateList(context);
   const output = context.stdout ?? ((value: string) => process.stdout.write(value));
 
@@ -91,15 +103,11 @@ export function runIntegrateListCommand(context: IntegrateContext = {}): Integra
   return result;
 }
 
-export function runIntegrateList(context: IntegrateContext = {}): IntegrateListResult {
+export function runIntegrateList(context: IntegrationContext = {}): IntegrateListResult {
   return {
     integrations: [
       codexStatus(context),
-      {
-        agent: "claude-code",
-        status: "coming-soon",
-        message: "coming soon"
-      },
+      claudeCodeStatus(),
       {
         agent: "openclaw",
         status: "coming-soon",
@@ -111,7 +119,7 @@ export function runIntegrateList(context: IntegrateContext = {}): IntegrateListR
 
 export async function runIntegrateCodexCommand(
   options: IntegrateCodexOptions,
-  context: IntegrateContext = {}
+  context: IntegrationContext = {}
 ): Promise<IntegrateCodexResult> {
   const output = context.stdout ?? ((value: string) => process.stdout.write(value));
 
@@ -132,7 +140,7 @@ export async function runIntegrateCodexCommand(
 
 export async function runIntegrateCodex(
   options: IntegrateCodexOptions,
-  context: IntegrateContext = {}
+  context: IntegrationContext = {}
 ): Promise<IntegrateCodexResult> {
   if (options.dryRun === true && options.apply === true) {
     throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "integrate codex 不能同時使用 --dry-run 與 --apply");
@@ -187,7 +195,56 @@ export async function runIntegrateCodex(
   };
 }
 
-function codexStatus(context: IntegrateContext): IntegrationStatus {
+export async function runIntegrateClaudeCodeCommand(
+  options: IntegrateAgentOptions,
+  context: IntegrationContext = {}
+): Promise<IntegrateClaudeCodeResult> {
+  const output = context.stdout ?? ((value: string) => process.stdout.write(value));
+  const result = await runIntegrateClaudeCode(options, context);
+
+  output(formatIntegrationDryRunResult(result));
+
+  return result;
+}
+
+export async function runIntegrateClaudeCode(
+  options: IntegrateAgentOptions,
+  context: IntegrationContext = {}
+): Promise<IntegrateClaudeCodeResult> {
+  if (options.dryRun === true && options.apply === true) {
+    throw new AgentNotesError(ErrorCode.CONFIG_INVALID, "integrate claude-code 不能同時使用 --dry-run 與 --apply");
+  }
+
+  if (options.apply === true) {
+    throw new AgentNotesError(ErrorCode.INTEGRATION_UNSUPPORTED, "Claude Code apply 尚未支援；Phase 2 先提供 dry-run skeleton");
+  }
+
+  const stableBinary = stableBinaryFor(options.binary, "dry-run");
+  const hookCommand = `${stableBinary} ${claudeCodeHookCommandTemplate}`;
+  const detectionSummary = firstExistingConfigSummary({
+    context,
+    envRootName: "CLAUDE_HOME",
+    fallbackRoot: "~/.claude",
+    fileNames: ["settings.json", "settings.local.json"]
+  });
+
+  return {
+    agent: "claude-code",
+    mode: "dry-run",
+    detectionSummary,
+    hookCommand,
+    stableBinary,
+    filesToModify: 0,
+    filesToBackup: 0,
+    hints: [
+      "Claude Code hook schema 尚未 fixture-driven 驗證，Phase 2 只提供 dry-run preview",
+      "apply 需等 config shape、backup、rollback tests 與 code review 完成後才開放",
+      "若本機設定路徑不同，請先用文件或 fixture 補上偵測規則"
+    ]
+  };
+}
+
+function codexStatus(context: IntegrationContext): IntegrationStatus {
   try {
     loadRecognizedCodexConfig(codexHome(context));
 
@@ -211,6 +268,14 @@ function codexStatus(context: IntegrateContext): IntegrationStatus {
       message: "unrecognized config shape"
     };
   }
+}
+
+function claudeCodeStatus(): IntegrationStatus {
+  return {
+    agent: "claude-code",
+    status: "dry-run-only",
+    message: "dry-run skeleton available; apply unsupported"
+  };
 }
 
 function loadRecognizedCodexConfig(codexHomePath: string): RecognizedCodexConfig {
@@ -264,48 +329,7 @@ function codexConfigWithHook(config: Record<string, unknown>, hookCommand: strin
   };
 }
 
-function stableBinaryFor(binaryInput: string | undefined, mode: "dry-run" | "applied"): string {
-  const binary = binaryInput?.trim() || "agent-notes";
-  const hasExplicitBinary = binaryInput !== undefined && binaryInput.trim() !== "";
-  const hasPathSeparator = binary.includes("/") || binary.includes("\\");
-
-  if (
-    binary === "" ||
-    binary.includes("\0") ||
-    (mode === "applied" && (!hasExplicitBinary || !path.isAbsolute(binary))) ||
-    (hasPathSeparator && !path.isAbsolute(binary)) ||
-    isEphemeralBinary(binary) ||
-    /[\s;&|`$<>(){}[\]!*?'"\\]/u.test(binary)
-  ) {
-    throw new AgentNotesError(
-      ErrorCode.INTEGRATION_BINARY_UNSTABLE,
-      "hook command 需要 stable agent-notes binary；請使用 global install 或 --binary 指定固定路徑"
-    );
-  }
-
-  return binary;
-}
-
-function isEphemeralBinary(binary: string): boolean {
-  const normalized = binary.replaceAll("\\", "/").toLowerCase();
-  const tokens = normalized.split(/\s+/u).filter(Boolean);
-  const command = tokens[0] ?? "";
-  const commandName = path.posix.basename(command);
-  const subcommand = tokens[1] ?? "";
-
-  return (
-    commandName === "npx" ||
-    commandName === "_npx" ||
-    commandName === "bunx" ||
-    (commandName === "npm" && (subcommand === "exec" || subcommand === "x")) ||
-    (commandName === "pnpm" && subcommand === "dlx") ||
-    (commandName === "yarn" && subcommand === "dlx") ||
-    (commandName === "corepack" && tokens[1] === "pnpm" && tokens[2] === "dlx") ||
-    /(?:^|\/)node_modules\/\.bin(?:\/|$)/u.test(normalized)
-  );
-}
-
-function codexHome(context: IntegrateContext): string {
+function codexHome(context: IntegrationContext): string {
   return resolvePath(context.env?.CODEX_HOME ?? process.env.CODEX_HOME ?? "~/.codex", context);
 }
 
@@ -329,6 +353,21 @@ function formatIntegrateCodexResult(result: IntegrateCodexResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+function formatIntegrationDryRunResult(result: IntegrationDryRunResult): string {
+  const lines = [
+    `${result.agent}: ${result.mode}`,
+    `detectedConfig: ${result.detectionSummary}`,
+    `binary: ${result.stableBinary}`,
+    `hookCommand: ${result.hookCommand}`,
+    `filesToModify: ${result.filesToModify}`,
+    `filesToBackup: ${result.filesToBackup}`,
+    "no files written",
+    ...result.hints.map((hint) => `hint: ${hint}`)
+  ];
+
+  return `${lines.join("\n")}\n`;
+}
+
 function formatCodexManualInstructions(stableBinary: string): string {
   return [
     "codex: unsupported",
@@ -338,10 +377,6 @@ function formatCodexManualInstructions(stableBinary: string): string {
     "3. keep a backup of the original config before any manual change",
     "no files written"
   ].join("\n").concat("\n");
-}
-
-function localFileSummary(targetPath: string): string {
-  return `${path.basename(targetPath)}#${createHash("sha256").update(path.resolve(targetPath)).digest("hex").slice(0, 8)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

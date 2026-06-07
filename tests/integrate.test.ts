@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  runIntegrateClaudeCode,
+  runIntegrateClaudeCodeCommand,
   runIntegrateCodex,
   runIntegrateCodexCommand,
   runIntegrateList,
@@ -82,8 +84,8 @@ describe("integrate command", () => {
         },
         {
           agent: "claude-code",
-          status: "coming-soon",
-          message: "coming soon"
+          status: "dry-run-only",
+          message: "dry-run skeleton available; apply unsupported"
         },
         {
           agent: "openclaw",
@@ -92,6 +94,7 @@ describe("integrate command", () => {
         }
       ]);
       expect(output.join("")).toContain("codex: not-found");
+      expect(output.join("")).toContain("claude-code: dry-run-only");
       expect(existsSync(workspace.codexHome)).toBe(false);
     } finally {
       cleanup(workspace.root);
@@ -614,6 +617,156 @@ describe("integrate command", () => {
       expect(readFileSync(configPath, "utf8")).toBe(before);
       expect(existsSync(path.join(outsideDirectory, "agent-notes"))).toBe(false);
       expect(existsSync(path.join(workspace.codexHome, ".agent-notes", "integrate-codex.lock"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("claude-code dry-run 不寫檔且輸出不含本機 config 絕對路徑", async () => {
+    const workspace = makeWorkspace();
+    const output: string[] = [];
+    const claudeHome = path.join(workspace.root, "claude-home");
+    const settingsPath = path.join(claudeHome, "settings.json");
+
+    writeFixtureFile(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          hooks: {}
+        },
+        null,
+        2
+      )}\n`
+    );
+    const before = readFileSync(settingsPath, "utf8");
+
+    try {
+      const result = await runIntegrateClaudeCodeCommand(
+        {
+          dryRun: true
+        },
+        {
+          ...contextFor(workspace),
+          env: {
+            ...contextFor(workspace).env,
+            CLAUDE_HOME: claudeHome
+          },
+          stdout: (value) => output.push(value)
+        }
+      );
+      const rendered = output.join("");
+
+      expect(result.mode).toBe("dry-run");
+      expect(result.agent).toBe("claude-code");
+      expect(result.filesToModify).toBe(0);
+      expect(result.hookCommand).toContain("agent-notes capture --tool claude-code");
+      expect(readFileSync(settingsPath, "utf8")).toBe(before);
+      expect(rendered).toContain("claude-code: dry-run");
+      expect(rendered).toContain("detectedConfig: settings.json#");
+      expect(rendered).toContain("no files written");
+      expect(rendered).not.toContain(claudeHome);
+      expect(rendered).not.toContain(workspace.home);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("claude-code dry-run 找不到 config 時仍只輸出 hints 且不建立 config root", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      const result = await runIntegrateClaudeCode(
+        {
+          dryRun: true
+        },
+        contextFor(workspace)
+      );
+
+      expect(result.detectionSummary).toBe("not detected");
+      expect(result.filesToModify).toBe(0);
+      expect(result.filesToBackup).toBe(0);
+      expect(existsSync(path.join(workspace.home, ".claude"))).toBe(false);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("claude-code dry-run 使用 isolated context.env 時不讀取 process.env.CLAUDE_HOME", async () => {
+    const workspace = makeWorkspace();
+    const originalClaudeHome = process.env.CLAUDE_HOME;
+    const processClaudeHome = path.join(workspace.root, "process-claude-home");
+
+    writeFixtureFile(path.join(processClaudeHome, "settings.json"), "{}\n");
+
+    try {
+      process.env.CLAUDE_HOME = processClaudeHome;
+
+      const result = await runIntegrateClaudeCode(
+        {
+          dryRun: true
+        },
+        contextFor(workspace)
+      );
+
+      expect(result.detectionSummary).toBe("not detected");
+    } finally {
+      if (originalClaudeHome === undefined) {
+        delete process.env.CLAUDE_HOME;
+      } else {
+        process.env.CLAUDE_HOME = originalClaudeHome;
+      }
+
+      cleanup(workspace.root);
+    }
+  });
+
+  it("claude-code apply 回 INTEGRATION_UNSUPPORTED 且不寫檔", async () => {
+    const workspace = makeWorkspace();
+    const claudeHome = path.join(workspace.root, "claude-home");
+    const settingsPath = path.join(claudeHome, "settings.json");
+
+    writeFixtureFile(settingsPath, "{}\n");
+    const before = readFileSync(settingsPath, "utf8");
+
+    try {
+      await runIntegrateClaudeCode(
+        {
+          apply: true,
+          binary: "/usr/local/bin/agent-notes",
+          yes: true
+        },
+        {
+          ...contextFor(workspace),
+          env: {
+            ...contextFor(workspace).env,
+            CLAUDE_HOME: claudeHome
+          }
+        }
+      );
+      throw new Error("expected runIntegrateClaudeCode to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INTEGRATION_UNSUPPORTED);
+      expect(readFileSync(settingsPath, "utf8")).toBe(before);
+    } finally {
+      cleanup(workspace.root);
+    }
+  });
+
+  it("claude-code dry-run 拒絕 npx ephemeral binary", async () => {
+    const workspace = makeWorkspace();
+
+    try {
+      await runIntegrateClaudeCode(
+        {
+          dryRun: true,
+          binary: "npx agent-notes"
+        },
+        contextFor(workspace)
+      );
+      throw new Error("expected runIntegrateClaudeCode to fail");
+    } catch (error) {
+      expectAgentNotesError(error, ErrorCode.INTEGRATION_BINARY_UNSTABLE);
+      expect(existsSync(path.join(workspace.home, ".claude"))).toBe(false);
     } finally {
       cleanup(workspace.root);
     }

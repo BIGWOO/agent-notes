@@ -107,7 +107,7 @@ interface InitFirstProject {
 }
 
 type InitIntegrationAgent = "codex";
-type InitComingSoonIntegrationAgent = "claude-code" | "openclaw";
+type InitComingSoonIntegrationAgent = "openclaw";
 
 interface InitIntegrationOnboarding {
   readonly status: "deferred" | "preview";
@@ -552,7 +552,7 @@ async function resolveIntegrationOnboarding(
     message: [
       "Agent Notes can preview optional AI agent integrations:",
       "- codex: next Phase 1 integration workstream",
-      "- claude-code: coming soon",
+      "- claude-code: dry-run only",
       "- openclaw: coming soon",
       "- init will not modify hook settings"
     ].join("\n"),
@@ -566,8 +566,8 @@ function createIntegrationPreview(): InitIntegrationOnboarding {
   return {
     status: "preview",
     selectedAgents: ["codex"],
-    nextCommands: ["agent-notes integrate --list"],
-    comingSoonAgents: ["claude-code", "openclaw"]
+    nextCommands: ["agent-notes integrate --list", "agent-notes integrate claude-code --dry-run"],
+    comingSoonAgents: ["openclaw"]
   };
 }
 
@@ -575,8 +575,8 @@ function createIntegrationDeferred(): InitIntegrationOnboarding {
   return {
     status: "deferred",
     selectedAgents: [],
-    nextCommands: ["agent-notes integrate --list"],
-    comingSoonAgents: ["claude-code", "openclaw"]
+    nextCommands: ["agent-notes integrate --list", "agent-notes integrate claude-code --dry-run"],
+    comingSoonAgents: ["openclaw"]
   };
 }
 
